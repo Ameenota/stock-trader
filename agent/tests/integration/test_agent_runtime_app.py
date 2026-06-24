@@ -26,6 +26,17 @@ def agent_app(monkeypatch: pytest.MonkeyPatch) -> AgentEngineApp:
     # Set integration test flag to mock external services
     monkeypatch.setenv("INTEGRATION_TEST", "TRUE")
 
+    from unittest.mock import MagicMock
+    import google.auth
+    import google.cloud.logging
+
+    # Mock Google Auth and Google Cloud Logging to prevent credentials/network errors during local testing
+    mock_creds = MagicMock()
+    monkeypatch.setattr(google.auth, "default", lambda *args, **kwargs: (mock_creds, "dummy-project"))
+
+    mock_logging_client = MagicMock()
+    monkeypatch.setattr(google.cloud.logging, "Client", lambda *args, **kwargs: mock_logging_client)
+
     from app.agent_runtime_app import agent_runtime
 
     agent_runtime.set_up()

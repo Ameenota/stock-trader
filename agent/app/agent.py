@@ -22,12 +22,18 @@ from google.adk.models import Gemini
 from google.genai import types
 
 import os
-import google.auth
 
-_, project_id = google.auth.default()
-os.environ["GOOGLE_CLOUD_PROJECT"] = project_id
-os.environ["GOOGLE_CLOUD_LOCATION"] = "global"
-os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "True"
+# Set to True to use Vertex AI (GCP), or False to use Google AI Studio (GEMINI_API_KEY)
+USE_VERTEX_AI = False
+
+if USE_VERTEX_AI:
+    import google.auth
+    _, project_id = google.auth.default()
+    os.environ["GOOGLE_CLOUD_PROJECT"] = project_id
+    os.environ["GOOGLE_CLOUD_LOCATION"] = "global"
+    os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "True"
+else:
+    os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "False"
 
 
 def get_weather(query: str) -> str:

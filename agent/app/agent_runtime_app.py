@@ -28,6 +28,10 @@ from app.app_utils.typing import Feedback
 # Load environment variables from .env file at runtime
 load_dotenv()
 
+# Initialize vertexai with a project to prevent errors during local execution/testing
+gcp_project = os.environ.get("GOOGLE_CLOUD_PROJECT") or "dummy-project"
+vertexai.init(project=gcp_project)
+
 
 class AgentEngineApp(AdkApp):
     def set_up(self) -> None:
