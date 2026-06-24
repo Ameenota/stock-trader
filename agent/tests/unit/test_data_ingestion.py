@@ -18,42 +18,57 @@ import pytest
 from app.tools.data_ingestion import fetch_ticker_news, ingest_market_news
 
 
+from datetime import datetime, timezone
+
 @pytest.fixture
 def mock_news_data():
     current_time = 1700000000.0  # Constant reference time
 
-    # Mock news items
+    # Helper to generate UTC ISO strings
+    def get_iso_str(ts):
+        return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+
+    # Mock nested news items matching the new yfinance structure
     return [
         {
-            # Within 24 hours (2 hours ago)
-            "title": "AI Hardware Demand Surges",
-            "summary": "NVDA reports record chip orders from tech giants.",
-            "providerPublishTime": int(current_time - 7200),
-            "publisher": "Tech News",
-            "link": "https://example.com/nvda-news-1",
+            "id": "1",
+            "content": {
+                "id": "1",
+                "contentType": "STORY",
+                "title": "AI Hardware Demand Surges",
+                "summary": "NVDA reports record chip orders from tech giants.",
+                "pubDate": get_iso_str(current_time - 7200),  # 2 hours ago
+            }
         },
         {
-            # Outside 24 hours (25 hours ago)
-            "title": "Old Market Analysis",
-            "summary": "Older summary of market movements.",
-            "providerPublishTime": int(current_time - 90000),
-            "publisher": "Finance Daily",
-            "link": "https://example.com/nvda-news-2",
+            "id": "2",
+            "content": {
+                "id": "2",
+                "contentType": "STORY",
+                "title": "Old Market Analysis",
+                "summary": "Older summary of market movements.",
+                "pubDate": get_iso_str(current_time - 90000),  # 25 hours ago
+            }
         },
         {
-            # Missing publish time
-            "title": "Breaking Tech Update",
-            "summary": "Update with no timestamp.",
-            "publisher": "Global News",
-            "link": "https://example.com/nvda-news-3",
+            "id": "3",
+            "content": {
+                "id": "3",
+                "contentType": "STORY",
+                "title": "Breaking Tech Update",
+                "summary": "Update with no timestamp.",
+                # Missing pubDate
+            }
         },
         {
-            # Exactly 24 hours ago (boundary condition)
-            "title": "On the Dot Update",
-            "summary": "Exactly 24 hours ago.",
-            "providerPublishTime": int(current_time - 86400),
-            "publisher": "FinTech",
-            "link": "https://example.com/nvda-news-4",
+            "id": "4",
+            "content": {
+                "id": "4",
+                "contentType": "STORY",
+                "title": "On the Dot Update",
+                "summary": "Exactly 24 hours ago.",
+                "pubDate": get_iso_str(current_time - 86400),  # Exactly 24 hours ago
+            }
         },
     ]
 

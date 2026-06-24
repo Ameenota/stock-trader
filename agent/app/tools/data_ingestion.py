@@ -20,6 +20,8 @@ import yfinance as yf
 TICKERS = ["NVDA", "AMD", "TSM", "MU", "SMCI", "DELL", "VRT", "ETN", "CEG", "TLT"]
 
 
+from datetime import datetime
+
 def fetch_ticker_news(ticker: str, current_time: float | None = None) -> List[Dict[str, str]]:
     """Fetches news for a specific ticker and filters for the last 24 hours.
 
@@ -44,14 +46,23 @@ def fetch_ticker_news(ticker: str, current_time: float | None = None) -> List[Di
 
     filtered_news = []
     for item in news_list:
-        publish_time = item.get("providerPublishTime")
-        if publish_time is None:
+        content = item.get("content", {})
+        pub_date_str = content.get("pubDate")
+        if not pub_date_str:
+            continue
+
+        try:
+            # Parse ISO 8601 string to timestamp
+            # Replace 'Z' with UTC offset '+00:00' to support python ISO format parser compatibility
+            pub_date_str = pub_date_str.replace("Z", "+00:00")
+            publish_time = datetime.fromisoformat(pub_date_str).timestamp()
+        except Exception:
             continue
 
         # 86400 seconds = 24 hours
         if current_time - publish_time <= 86400:
-            title = item.get("title", "")
-            summary = item.get("summary", "")
+            title = content.get("title", "")
+            summary = content.get("summary", "")
             filtered_news.append({
                 "title": title,
                 "summary": summary
