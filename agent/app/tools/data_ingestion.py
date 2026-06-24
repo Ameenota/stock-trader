@@ -207,3 +207,24 @@ def ingest_market_data(current_time: float | None = None) -> Dict[str, Dict[str,
     for ticker in TICKERS:
         results[ticker] = fetch_ticker_market_data(ticker, current_time=current_time)
     return results
+
+
+def print_portfolio_table(portfolio: list) -> None:
+    """Renders a beautiful ASCII table of the ranked portfolio and trade signals."""
+    print("\n" + "="*145)
+    print(f"{'Ticker':<6} | {'Score':<6} | {'Rank':<5} | {'Signal':<11} | {'Price':<8} | {'20d SMA':<8} | {'Price/MA':<8} | {'Consensus':<10} | {'Thesis'}")
+    print("="*145)
+    for item in portfolio:
+        thesis = item.get("thesis", "")
+        # Truncate thesis if it's too long for a clean terminal output
+        truncated_thesis = thesis[:60] + "..." if len(thesis) > 60 else thesis
+        price = item.get("current_price")
+        price_str = f"${price:.2f}" if price is not None else "N/A"
+        ma = item.get("moving_average_20d")
+        ma_str = f"${ma:.2f}" if ma is not None else "N/A"
+        ratio = item.get("price_to_ma_ratio")
+        ratio_str = f"{ratio:.3f}" if ratio is not None else "N/A"
+        consensus = item.get("analyst_consensus") or "N/A"
+        
+        print(f"{item['ticker']:<6} | {item['raw_score']:<6.2f} | {item['relative_rank']:<5} | {item['signal']:<11} | {price_str:<8} | {ma_str:<8} | {ratio_str:<8} | {consensus:<10} | {truncated_thesis}")
+    print("="*145 + "\n")

@@ -188,6 +188,101 @@ trading_agent = Agent(
     before_tool_callback=validate_and_intercept_trades,
 )
 
+
+async def run_daily_analysis_pipeline(dataset_id: str = "portfolio_analytics") -> list:
+    """Ingests market news/metrics, runs sentiment analysis agent, ranks assets,
+    and logs decisions to BigQuery.
+    """
+    from app.tools.data_ingestion import ingest_market_data
+    from app.tools.ranking import process_sentiment_rankings
+    from app.tools.bigquery_service import insert_sentiment
+
+    # 1. Ingest latest market news and metrics
+    market_data = ingest_market_data()
+
+    # 2. Run sentiment agent sub-session
+    session_service = InMemorySessionService()
+    session = await session_service.create_session(user_id="cron_job", app_name="sentiment")
+    runner = Runner(agent=sentiment_agent, session_service=session_service, app_name="sentiment")
+
+    news_dict = {ticker: data.get("news", []) for ticker, data in market_data.items()}
+
+    message = types.Content(
+        role="user",
+        parts=[types.Part.from_text(text=f"Analyze these news articles:\n{news_dict}")]
+    )
+
+    async for _ in runner.run_async(
+        new_message=message,
+        user_id="cron_job",
+        session_id=session.id,
+    ):
+        pass
+
+    session = await session_service.get_session(user_id="cron_job", session_id=session.id, app_name="sentiment")
+    sentiment_result = session.state.get("sentiment_result")
+    if not sentiment_result:
+        raise RuntimeError("Failed to retrieve sentiment analysis output from the LLM agent.")
+
+    # 3. Sort, rank and assign signals
+    ranked_portfolio = process_sentiment_rankings(sentiment_result)
+
+    # 4. Attach raw news and technical metrics for auditing
+    for item in ranked_portfolio:
+        ticker = item["ticker"]
+        ticker_data = market_data.get(ticker, {})
+        item["raw_news"] = ticker_data.get("news", [])
+        item["analyst_consensus"] = ticker_data.get("analyst_consensus")
+        item["target_price"] = ticker_data.get("target_price")
+        item["current_price"] = ticker_data.get("current_price")
+        item["moving_average_20d"] = ticker_data.get("moving_average_20d")
+        item["price_to_ma_ratio"] = ticker_data.get("price_to_ma_ratio")
+
+    # 5. Log decisions to BigQuery
+    insert_sentiment(ranked_portfolio, dataset_id=dataset_id)
+
+    return ranked_portfolio
+
+
+async def execute_trading_decisions(ranked_portfolio: list, dataset_id: str = "portfolio_analytics") -> None:
+    """Queries weekly metrics history and triggers trading_agent to execute trades on Robinhood."""
+    from app.tools.bigquery_service import get_historical_metrics
+
+    # 1. Fetch weekly historical signals log
+    weekly_metrics = get_historical_metrics(days=7, dataset_id=dataset_id)
+    
+    # 2. Run trading agent session
+    # Clear INTEGRATION_TEST to allow the McpToolset to connect
+    if "INTEGRATION_TEST" in os.environ:
+        del os.environ["INTEGRATION_TEST"]
+
+    session_service = InMemorySessionService()
+    session = await session_service.create_session(user_id="cron_job", app_name="trading")
+    runner = Runner(agent=trading_agent, session_service=session_service, app_name="trading")
+
+    prompt_text = f"""Please perform today's trading execution and portfolio rebalancing.
+Here is the historical metrics log for all 10 assets over the past week:
+{weekly_metrics}"""
+
+    message = types.Content(
+        role="user",
+        parts=[types.Part.from_text(text=prompt_text)]
+    )
+
+    # Execute and stream reasoning to standard output
+    print("\n=== Trading Agent Execution & Reasoning Stream ===")
+    async for event in runner.run_async(
+        new_message=message,
+        user_id="cron_job",
+        session_id=session.id,
+    ):
+        if event.content and event.content.parts:
+            for part in event.content.parts:
+                if part.text:
+                    print(part.text, end="", flush=True)
+    print("\n==================================================\n")
+
+
 # Define tools list, conditionally adding robinhood_toolset if not in a test environment
 agent_tools = [analyze_and_rank_portfolio]
 if not os.environ.get("INTEGRATION_TEST") and "pytest" not in sys.modules:
