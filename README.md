@@ -87,3 +87,14 @@ To run the agent automatically and headlessly on a daily cron job:
    ```bash
    agents-cli playground
    ```
+
+---
+
+## 📅 Future / Deployment TODOs
+
+* [ ] **Persistent Headless Auth for Daily Cron:**
+  When deploying the agent to GCP Cloud Functions / Cloud Run for automated daily runs, we need to persist the dynamic Robinhood OAuth tokens:
+  1. Save the local `~/.mcp-auth/config.json` to **GCP Secret Manager** (or GCS).
+  2. In the serverless function handler, copy the secret JSON value to `/tmp/.mcp-auth/config.json` on startup.
+  3. Set `os.environ["MCP_REMOTE_CONFIG_DIR"] = "/tmp/.mcp-auth"`.
+  4. After the agent run finishes (which will silently trigger token refresh), read `/tmp/.mcp-auth/config.json` and save the new version back to Secret Manager to keep it valid for the next run.
