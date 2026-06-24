@@ -36,6 +36,7 @@ def mock_bq_client(mocker):
 
 def test_setup_bigquery(mock_bq_client):
     """Verifies that setup_bigquery creates the dataset and tables with the correct schema."""
+    mock_bq_client.get_table.side_effect = Exception("not found")
     setup_bigquery(dataset_id="test_dataset")
 
     # Assert dataset was created
@@ -60,6 +61,8 @@ def test_setup_bigquery(mock_bq_client):
     assert sentiment_table.schema[4].field_type == "STRING"
     assert sentiment_table.schema[5].name == "timestamp"
     assert sentiment_table.schema[5].field_type == "TIMESTAMP"
+    assert sentiment_table.schema[6].name == "raw_news"
+    assert sentiment_table.schema[6].field_type == "STRING"
 
     # Verify second table (trade_history)
     trade_table = mock_bq_client.create_table.call_args_list[1][0][0]
@@ -79,8 +82,22 @@ def test_setup_bigquery(mock_bq_client):
 def test_insert_sentiment(mock_bq_client):
     """Verifies that insert_sentiment processes and submits rows correctly."""
     ranked_portfolio = [
-        {"ticker": "NVDA", "raw_score": 0.8, "thesis": "Strong AI growth", "relative_rank": 10, "signal": "STRONG BUY"},
-        {"ticker": "SMCI", "raw_score": -0.5, "thesis": "Cash flow issues", "relative_rank": 1, "signal": "LIQUIDATE"}
+        {
+            "ticker": "NVDA",
+            "raw_score": 0.8,
+            "thesis": "Strong AI growth",
+            "relative_rank": 10,
+            "signal": "STRONG BUY",
+            "raw_news": [{"title": "News 1", "summary": "Summary 1"}]
+        },
+        {
+            "ticker": "SMCI",
+            "raw_score": -0.5,
+            "thesis": "Cash flow issues",
+            "relative_rank": 1,
+            "signal": "LIQUIDATE",
+            "raw_news": []
+        }
     ]
     
     mock_bq_client.insert_rows_json.return_value = []  # No errors
@@ -100,7 +117,8 @@ def test_insert_sentiment(mock_bq_client):
             "thesis": "Strong AI growth",
             "relative_rank": 10,
             "signal": "STRONG BUY",
-            "timestamp": timestamp_str
+            "timestamp": timestamp_str,
+            "raw_news": '[{"title": "News 1", "summary": "Summary 1"}]'
         },
         {
             "ticker": "SMCI",
@@ -108,7 +126,8 @@ def test_insert_sentiment(mock_bq_client):
             "thesis": "Cash flow issues",
             "relative_rank": 1,
             "signal": "LIQUIDATE",
-            "timestamp": timestamp_str
+            "timestamp": timestamp_str,
+            "raw_news": "[]"
         }
     ]
 
@@ -207,3 +226,25 @@ def test_insert_trade_record_error(mock_bq_client):
 
     with pytest.raises(RuntimeError, match="Failed to insert trade record into BigQuery"):
         insert_trade_record(ticker="NVDA", action="STRONG BUY", amount_usd=100.0)
+
+
+def test_setup_bigquery_updates_schema(mock_bq_client):
+    """Verifies that setup_bigquery updates the schema if columns are missing."""
+    # Simulate table existing, but missing 'raw_news'
+    mock_table = MagicMock()
+    mock_table.schema = [
+        bigquery.SchemaField("ticker", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("raw_score", "FLOAT", mode="REQUIRED"),
+        bigquery.SchemaField("thesis", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("relative_rank", "INTEGER", mode="REQUIRED"),
+        bigquery.SchemaField("signal", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("timestamp", "TIMESTAMP", mode="REQUIRED"),
+    ]
+    mock_bq_client.get_table.return_value = mock_table
+
+    setup_bigquery(dataset_id="test_dataset")
+
+    # Assert update_table was called to append raw_news
+    assert mock_bq_client.update_table.call_count >= 1
+    updated_table = mock_bq_client.update_table.call_args[0][0]
+    assert any(field.name == "raw_news" for field in updated_table.schema)

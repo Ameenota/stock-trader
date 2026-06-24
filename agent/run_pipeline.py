@@ -88,6 +88,11 @@ async def run_pipeline(dataset_id: str = "portfolio_analytics") -> None:
     print("\n4. Running deterministic ranking and signal assignment...")
     ranked_portfolio = process_sentiment_rankings(sentiment_result)
 
+    # Attach the raw news stories to each portfolio item for BigQuery auditing
+    for item in ranked_portfolio:
+        ticker = item["ticker"]
+        item["raw_news"] = news_dict.get(ticker, [])
+
     # Step 5: Log decisions into Google Cloud BigQuery
     print(f"\n5. Logging analysis results to BigQuery dataset '{dataset_id}'...")
     insert_sentiment(ranked_portfolio, dataset_id=dataset_id)

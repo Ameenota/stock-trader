@@ -51,9 +51,18 @@ def setup_bigquery(dataset_id: str = "portfolio_analytics") -> None:
         bigquery.SchemaField("relative_rank", "INTEGER", mode="REQUIRED"),
         bigquery.SchemaField("signal", "STRING", mode="REQUIRED"),
         bigquery.SchemaField("timestamp", "TIMESTAMP", mode="REQUIRED"),
+        bigquery.SchemaField("raw_news", "STRING", mode="NULLABLE"),
     ]
     sentiment_table = bigquery.Table(sentiment_table_id, schema=sentiment_schema)
-    client.create_table(sentiment_table, exists_ok=True)
+    try:
+        existing_table = client.get_table(sentiment_table_id)
+        existing_fields = {field.name for field in existing_table.schema}
+        fields_to_add = [field for field in sentiment_schema if field.name not in existing_fields]
+        if fields_to_add:
+            existing_table.schema = list(existing_table.schema) + fields_to_add
+            client.update_table(existing_table, ["schema"])
+    except Exception:
+        client.create_table(sentiment_table, exists_ok=True)
 
     # 3. Define trade_history table schema
     trade_table_id = f"{project}.{dataset_id}.trade_history"
@@ -64,7 +73,15 @@ def setup_bigquery(dataset_id: str = "portfolio_analytics") -> None:
         bigquery.SchemaField("timestamp", "TIMESTAMP", mode="REQUIRED"),
     ]
     trade_table = bigquery.Table(trade_table_id, schema=trade_schema)
-    client.create_table(trade_table, exists_ok=True)
+    try:
+        existing_table = client.get_table(trade_table_id)
+        existing_fields = {field.name for field in existing_table.schema}
+        fields_to_add = [field for field in trade_schema if field.name not in existing_fields]
+        if fields_to_add:
+            existing_table.schema = list(existing_table.schema) + fields_to_add
+            client.update_table(existing_table, ["schema"])
+    except Exception:
+        client.create_table(trade_table, exists_ok=True)
 
 
 def insert_sentiment(
@@ -74,7 +91,7 @@ def insert_sentiment(
     """Inserts the ranked list from Phase 2 into the infrastructure_sentiment table.
 
     Args:
-        ranked_portfolio: List of dictionaries containing ticker, raw_score, thesis, relative_rank, and signal.
+        ranked_portfolio: List of dictionaries containing ticker, raw_score, thesis, relative_rank, signal, and raw_news.
         dataset_id: The BigQuery dataset ID.
     """
     if not ranked_portfolio:
@@ -87,13 +104,19 @@ def insert_sentiment(
     
     rows_to_insert = []
     for item in ranked_portfolio:
+        raw_news_val = item.get("raw_news")
+        if isinstance(raw_news_val, (list, dict)):
+            import json
+            raw_news_val = json.dumps(raw_news_val)
+
         rows_to_insert.append({
             "ticker": item["ticker"],
             "raw_score": float(item["raw_score"]),
             "thesis": item.get("thesis"),
             "relative_rank": int(item["relative_rank"]),
             "signal": item["signal"],
-            "timestamp": item.get("timestamp") or current_time_str
+            "timestamp": item.get("timestamp") or current_time_str,
+            "raw_news": raw_news_val
         })
         
     errors = client.insert_rows_json(table_id, rows_to_insert)
