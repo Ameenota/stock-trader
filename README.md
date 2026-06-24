@@ -98,3 +98,8 @@ To run the agent automatically and headlessly on a daily cron job:
   2. In the serverless function handler, copy the secret JSON value to `/tmp/.mcp-auth/config.json` on startup.
   3. Set `os.environ["MCP_REMOTE_CONFIG_DIR"] = "/tmp/.mcp-auth"`.
   4. After the agent run finishes (which will silently trigger token refresh), read `/tmp/.mcp-auth/config.json` and save the new version back to Secret Manager to keep it valid for the next run.
+
+* [ ] **Restrict Robinhood Actions to Specific Agentic Account:**
+  To guarantee the agent never executes trades or queries info on any personal brokerage account other than the designated Agentic Account ending in `48661`:
+  * **Option A (System Prompting):** Update the agent system instruction in `agent.py` to strictly demand that all query parameters and trading calls use the account ID ending in `48661`.
+  * **Option B (Deterministic Python Validation - Recommended):** Implement wrapper/interceptor logic in Python around the MCP toolset calls to inspect the `account_number` arguments dynamically. Throw a hard error if the LLM attempts to pass an account number other than the allowed `48661` account.
