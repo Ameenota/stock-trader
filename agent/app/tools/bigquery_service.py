@@ -89,6 +89,28 @@ def setup_bigquery(dataset_id: str = "portfolio_analytics") -> None:
     except Exception:
         client.create_table(trade_table, exists_ok=True)
 
+    # 4. Define portfolio_snapshot table schema
+    snapshot_table_id = f"{project}.{dataset_id}.portfolio_snapshot"
+    snapshot_schema = [
+        bigquery.SchemaField("timestamp", "TIMESTAMP", mode="REQUIRED"),
+        bigquery.SchemaField("account_number", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("total_equity", "FLOAT", mode="REQUIRED"),
+        bigquery.SchemaField("total_cash", "FLOAT", mode="REQUIRED"),
+        bigquery.SchemaField("unrealized_gain_loss", "FLOAT", mode="REQUIRED"),
+        bigquery.SchemaField("unrealized_gain_loss_percent", "FLOAT", mode="REQUIRED"),
+        bigquery.SchemaField("holdings", "STRING", mode="REQUIRED"),
+    ]
+    snapshot_table = bigquery.Table(snapshot_table_id, schema=snapshot_schema)
+    try:
+        existing_table = client.get_table(snapshot_table_id)
+        existing_fields = {field.name for field in existing_table.schema}
+        fields_to_add = [field for field in snapshot_schema if field.name not in existing_fields]
+        if fields_to_add:
+            existing_table.schema = list(existing_table.schema) + fields_to_add
+            client.update_table(existing_table, ["schema"])
+    except Exception:
+        client.create_table(snapshot_table, exists_ok=True)
+
 
 def insert_sentiment(
     ranked_portfolio: List[Dict[str, Any]], 
@@ -252,6 +274,42 @@ def insert_trade_record(
         job.result()
     except Exception as e:
         raise RuntimeError(f"Failed to insert trade record into BigQuery: {e}")
+
+
+def insert_portfolio_snapshot(
+    snapshot: dict,
+    dataset_id: str = "portfolio_analytics"
+) -> None:
+    """Inserts a portfolio value and holdings snapshot into the portfolio_snapshot table.
+
+    Args:
+        snapshot: Dictionary containing total_equity, total_cash, unrealized_gain_loss, 
+                  unrealized_gain_loss_percent, account_number, holdings, and optional timestamp.
+        dataset_id: The BigQuery dataset ID.
+    """
+    client = get_bigquery_client()
+    table_id = f"{client.project}.{dataset_id}.portfolio_snapshot"
+
+    current_time_str = datetime.now(timezone.utc).isoformat()
+    
+    row_to_insert = {
+        "timestamp": snapshot.get("timestamp") or current_time_str,
+        "account_number": snapshot["account_number"],
+        "total_equity": float(snapshot["total_equity"]),
+        "total_cash": float(snapshot["total_cash"]),
+        "unrealized_gain_loss": float(snapshot["unrealized_gain_loss"]),
+        "unrealized_gain_loss_percent": float(snapshot["unrealized_gain_loss_percent"]),
+        "holdings": snapshot["holdings"]  # JSON-formatted string
+    }
+
+    try:
+        job_config = bigquery.LoadJobConfig(
+            write_disposition="WRITE_APPEND",
+        )
+        job = client.load_table_from_json([row_to_insert], table_id, job_config=job_config)
+        job.result()
+    except Exception as e:
+        raise RuntimeError(f"Failed to insert portfolio snapshot into BigQuery: {e}")
 
 
 def get_historical_metrics(

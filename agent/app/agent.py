@@ -294,6 +294,113 @@ Here is the historical metrics log for all 10 assets over the past week:
                     print(part.text, end="", flush=True)
     print("\n==================================================\n")
 
+    # 3. Log post-trade portfolio snapshot
+    print("\nLogging portfolio snapshot to BigQuery...")
+    try:
+        await log_portfolio_snapshot(dataset_id=dataset_id)
+        print("   Portfolio snapshot logged successfully.")
+    except Exception as e:
+        print(f"   Warning: Failed to log portfolio snapshot: {e}")
+
+
+async def log_portfolio_snapshot(dataset_id: str = "portfolio_analytics") -> None:
+    """Queries Robinhood MCP tools for current equity, cash, and holdings,
+    and inserts a snapshot record into BigQuery."""
+    import json
+    from datetime import datetime, timezone
+    from app.tools.bigquery_service import insert_portfolio_snapshot
+
+    # 1. Fetch available tools from remote server
+    try:
+        tools = await robinhood_toolset.get_tools()
+        tools_dict = {t.name: t for t in tools}
+    except Exception as e:
+        print(f"   Warning: Could not fetch MCP tools: {e}")
+        return
+
+    # Redacted target account format: select account ending in 48661
+    account_number = "ROBINHOOD_ACCOUNT_NUMBER"  # Default fallback, will search list
+    if "get_accounts" in tools_dict:
+        try:
+            accounts_res = await tools_dict["get_accounts"].run_async(args={}, tool_context=None)
+            results = accounts_res.get("structuredContent", {}).get("data", {}).get("results", [])
+            for acc in results:
+                acc_num = acc.get("account_number")
+                if acc_num and str(acc_num).endswith("48661"):
+                    account_number = str(acc_num)
+                    break
+        except Exception:
+            pass
+
+    # 2. Query portfolio metrics
+    total_equity = 100.0
+    total_cash = 100.0
+    
+    if "get_portfolio" in tools_dict:
+        try:
+            port_res = await tools_dict["get_portfolio"].run_async(args={"account_number": account_number}, tool_context=None)
+            data = port_res.get("structuredContent", {}).get("data", {})
+            total_equity = float(data.get("total_value", 100.0))
+            total_cash = float(data.get("cash", 100.0))
+        except Exception:
+            pass
+
+    # Calculate gain/loss from the base $100 budget
+    unrealized_gain_loss = total_equity - 100.0
+    unrealized_gain_loss_percent = (unrealized_gain_loss / 100.0) * 100.0
+
+    # 3. Query positions and quotes
+    holdings = []
+    if "get_equity_positions" in tools_dict:
+        try:
+            pos_res = await tools_dict["get_equity_positions"].run_async(args={"account_number": account_number}, tool_context=None)
+            positions = pos_res.get("structuredContent", {}).get("data", {}).get("positions", [])
+            
+            active_symbols = []
+            symbol_shares = {}
+            symbol_cost = {}
+            
+            for pos in positions:
+                qty = float(pos.get("quantity", 0))
+                if qty > 0:
+                    sym = pos["symbol"]
+                    active_symbols.append(sym)
+                    symbol_shares[sym] = qty
+                    symbol_cost[sym] = float(pos.get("average_buy_price", 0))
+
+            # Fetch live prices for active holdings
+            if active_symbols and "get_equity_quotes" in tools_dict:
+                quotes_res = await tools_dict["get_equity_quotes"].run_async(args={"symbols": active_symbols}, tool_context=None)
+                results = quotes_res.get("structuredContent", {}).get("data", {}).get("results", [])
+                for res in results:
+                    quote = res.get("quote", {})
+                    sym = quote.get("symbol")
+                    if sym in symbol_shares:
+                        # Find price, checking both trade and non-reg trade prices
+                        price = float(quote.get("last_non_reg_trade_price") or quote.get("last_trade_price") or 0.0)
+                        qty = symbol_shares[sym]
+                        equity_val = qty * price
+                        holdings.append({
+                            "symbol": sym,
+                            "shares": qty,
+                            "average_buy_price": symbol_cost[sym],
+                            "current_price": price,
+                            "equity": equity_val
+                        })
+        except Exception:
+            pass
+
+    snapshot = {
+        "account_number": f"••••{account_number[-5:]}" if len(account_number) >= 5 else account_number,
+        "total_equity": total_equity,
+        "total_cash": total_cash,
+        "unrealized_gain_loss": unrealized_gain_loss,
+        "unrealized_gain_loss_percent": unrealized_gain_loss_percent,
+        "holdings": json.dumps(holdings)
+    }
+
+    insert_portfolio_snapshot(snapshot, dataset_id=dataset_id)
+
 
 # Define tools list, conditionally adding robinhood_toolset if not in a test environment
 agent_tools = [analyze_and_rank_portfolio]

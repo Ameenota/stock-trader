@@ -45,8 +45,8 @@ def test_setup_bigquery(mock_bq_client):
     assert created_dataset.dataset_id == "test_dataset"
     assert created_dataset.location == "US"
 
-    # Assert tables were created (2 tables)
-    assert mock_bq_client.create_table.call_count == 2
+    # Assert tables were created (3 tables)
+    assert mock_bq_client.create_table.call_count == 3
     
     # Verify first table (infrastructure_market_metrics)
     sentiment_table = mock_bq_client.create_table.call_args_list[0][0][0]
@@ -87,6 +87,26 @@ def test_setup_bigquery(mock_bq_client):
     assert trade_table.schema[2].field_type == "FLOAT"
     assert trade_table.schema[3].name == "timestamp"
     assert trade_table.schema[3].field_type == "TIMESTAMP"
+
+    # Verify third table (portfolio_snapshot)
+    snapshot_table = mock_bq_client.create_table.call_args_list[2][0][0]
+    assert snapshot_table.table_id == "portfolio_snapshot"
+    assert snapshot_table.dataset_id == "test_dataset"
+    assert snapshot_table.project == "test-project"
+    assert snapshot_table.schema[0].name == "timestamp"
+    assert snapshot_table.schema[0].field_type == "TIMESTAMP"
+    assert snapshot_table.schema[1].name == "account_number"
+    assert snapshot_table.schema[1].field_type == "STRING"
+    assert snapshot_table.schema[2].name == "total_equity"
+    assert snapshot_table.schema[2].field_type == "FLOAT"
+    assert snapshot_table.schema[3].name == "total_cash"
+    assert snapshot_table.schema[3].field_type == "FLOAT"
+    assert snapshot_table.schema[4].name == "unrealized_gain_loss"
+    assert snapshot_table.schema[4].field_type == "FLOAT"
+    assert snapshot_table.schema[5].name == "unrealized_gain_loss_percent"
+    assert snapshot_table.schema[5].field_type == "FLOAT"
+    assert snapshot_table.schema[6].name == "holdings"
+    assert snapshot_table.schema[6].field_type == "STRING"
 
 
 def test_insert_sentiment(mock_bq_client):
