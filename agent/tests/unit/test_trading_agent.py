@@ -62,9 +62,9 @@ async def test_validate_and_intercept_trades_invalid_symbol():
 
 @pytest.mark.asyncio
 async def test_validate_and_intercept_trades_dry_run_execution():
-    """Verify that DRY_RUN=true intercepts write operations and mocks success."""
+    """Verify that SKIP_LIVE_TRADES=true intercepts write operations and mocks success."""
     # Set dry-run env flag
-    os.environ["DRY_RUN"] = "true"
+    os.environ["SKIP_LIVE_TRADES"] = "true"
     
     mock_tool = MagicMock()
     mock_tool.name = "place_order"
@@ -84,8 +84,8 @@ async def test_validate_and_intercept_trades_dry_run_execution():
 
 @pytest.mark.asyncio
 async def test_validate_and_intercept_trades_dry_run_query_passthrough():
-    """Verify that DRY_RUN=true does NOT intercept read operations (queries)."""
-    os.environ["DRY_RUN"] = "true"
+    """Verify that SKIP_LIVE_TRADES=true does NOT intercept read operations (queries)."""
+    os.environ["SKIP_LIVE_TRADES"] = "true"
     
     mock_tool = MagicMock()
     mock_tool.name = "get_portfolio"

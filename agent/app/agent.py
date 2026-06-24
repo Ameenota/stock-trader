@@ -162,7 +162,7 @@ async def validate_and_intercept_trades(tool, args, tool_context) -> dict | None
                 )
 
     # 3. Dry-Run Interceptor: block order modifications and return simulated success
-    if os.environ.get("DRY_RUN", "false").lower() == "true":
+    if os.environ.get("SKIP_LIVE_TRADES", "false").lower() == "true":
         tool_name = tool.name.lower()
         if "insert_trade_record" not in tool_name:
             if any(action in tool_name for action in ["order", "buy", "sell", "trade", "execute", "cancel"]):
