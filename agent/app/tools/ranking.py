@@ -37,6 +37,8 @@ def process_sentiment_rankings(
     # Extract list of items
     if isinstance(analyses, SentimentAnalysisResponse):
         items = analyses.analyses
+    elif isinstance(analyses, dict) and "analyses" in analyses:
+        items = analyses["analyses"]
     else:
         items = analyses
 
