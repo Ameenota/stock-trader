@@ -252,7 +252,36 @@ def test_insert_trade_record(mock_bq_client):
             "ticker": "TSM",
             "action": "STRONG BUY",
             "amount_usd": 50.0,
-            "timestamp": "2023-11-14T22:13:20+00:00"
+            "timestamp": "2023-11-14T22:13:20+00:00",
+            "reasoning": None
+        }
+    ]
+
+    mock_bq_client.insert_rows_json.assert_called_once_with(expected_table_id, expected_rows)
+
+
+def test_insert_trade_record_with_reasoning(mock_bq_client):
+    """Verifies that insert_trade_record formats and logs trade transactions with reasoning correctly."""
+    mock_bq_client.insert_rows_json.return_value = [] # No errors
+
+    # 1700000000 unix timestamp represents 2023-11-14T22:13:20+00:00
+    insert_trade_record(
+        ticker="TSM",
+        action="STRONG BUY",
+        amount_usd=50.0,
+        timestamp=1700000000.0,
+        reasoning="Market demands buy",
+        dataset_id="test_dataset"
+    )
+
+    expected_table_id = "test-project.test_dataset.trade_history"
+    expected_rows = [
+        {
+            "ticker": "TSM",
+            "action": "STRONG BUY",
+            "amount_usd": 50.0,
+            "timestamp": "2023-11-14T22:13:20+00:00",
+            "reasoning": "Market demands buy"
         }
     ]
 

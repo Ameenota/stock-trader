@@ -58,6 +58,7 @@ robinhood_toolset = McpToolset(
 
 from app.tools.data_ingestion import ingest_market_news
 from app.tools.ranking import SentimentAnalysisResponse, process_sentiment_rankings
+from app.tools.bigquery_service import insert_trade_record
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.adk.tools import ToolContext
@@ -116,6 +117,77 @@ async def analyze_and_rank_portfolio(tool_context: ToolContext) -> dict:
 
 import sys
 
+# System prompt for trading execution agent
+TRADING_AGENT_INSTRUCTION = """(limit all queries or actions to the agentic account ending in 48661)
+You are a professional financial execution expert. Your goal is to review the current Robinhood portfolio holdings and cash balance, analyze the historical rolling metrics provided, and execute trades to keep our portfolio aligned with our target state.
+
+Our rules:
+1. Limit actions to the agentic account ending in 48661.
+2. We hold a maximum of 3 stocks at any time.
+3. Our total target budget is $100.
+4. You can dynamically allocate weights as you see fit. If one stock has a super high signal, you can allocate up to 100% of the $100 to it, or split the cash among 2 or 3 stocks.
+5. Identify which stocks to hold, buy, or liquidate based on the 3 signals (Sentiment, Momentum, and Analyst recommendation) over the weekly historical range.
+6. Liquidate positions (sell 100%) for any stock that is no longer recommended to hold.
+7. Log the reasoning for every single action (BUY, SELL, or HOLD) you make.
+
+Execute trades as needed by using the Robinhood MCP tools. Once finished, summarize the actions taken."""
+
+
+async def validate_and_intercept_trades(tool, args, tool_context) -> dict | None:
+    """Interceptor callback (Double Guardrail + Dry Run) for trading execution."""
+    # 1. Enforce Robinhood Account Restriction
+    # Inspect arguments for account number key (e.g. 'account_number', 'account')
+    account_keys = [k for k in args.keys() if "account" in k.lower()]
+    for key in account_keys:
+        val = args.get(key)
+        if val:
+            val_str = str(val).strip()
+            if not val_str.endswith("48661"):
+                raise ValueError(
+                    f"Security Exception: Operation rejected. Tool '{tool.name}' attempted to access "
+                    f"unauthorized account '{val_str}'. All actions are restricted to account ending in 48661."
+                )
+
+    # 2. Enforce Predefined 10-Asset Universe
+    # Inspect arguments for ticker symbol keys (e.g. 'symbol', 'ticker')
+    ticker_keys = [k for k in args.keys() if "symbol" in k.lower() or "ticker" in k.lower()]
+    ALLOWED_TICKERS = {"NVDA", "AMD", "TSM", "MU", "SMCI", "DELL", "VRT", "ETN", "CEG", "TLT"}
+    for key in ticker_keys:
+        val = args.get(key)
+        if val:
+            val_str = str(val).strip().upper()
+            if val_str not in ALLOWED_TICKERS:
+                raise ValueError(
+                    f"Security Exception: Operation rejected. Ticker '{val_str}' is outside the authorized 10-asset universe."
+                )
+
+    # 3. Dry-Run Interceptor: block order modifications and return simulated success
+    if os.environ.get("DRY_RUN", "false").lower() == "true":
+        tool_name = tool.name.lower()
+        if "insert_trade_record" not in tool_name:
+            if any(action in tool_name for action in ["order", "buy", "sell", "trade", "execute", "cancel"]):
+                print(f"[DRY_RUN] Intercepted trade order tool '{tool.name}' with args: {args}")
+                return {
+                    "status": "success",
+                    "message": f"[DRY_RUN] Simulated execution successfully for {tool.name}",
+                    "order_id": "dry-run-mock-order-id-12345",
+                    "simulated": True
+                }
+
+    return None
+
+
+trading_agent = Agent(
+    name="trading_agent",
+    model=Gemini(
+        model="gemini-flash-latest",
+        retry_options=types.HttpRetryOptions(attempts=3),
+    ),
+    instruction=TRADING_AGENT_INSTRUCTION,
+    tools=[robinhood_toolset, insert_trade_record],
+    before_tool_callback=validate_and_intercept_trades,
+)
+
 # Define tools list, conditionally adding robinhood_toolset if not in a test environment
 agent_tools = [analyze_and_rank_portfolio]
 if not os.environ.get("INTEGRATION_TEST") and "pytest" not in sys.modules:
@@ -129,6 +201,7 @@ root_agent = Agent(
     ),
     instruction="You are a helpful AI assistant designed to provide accurate and useful information.",
     tools=agent_tools,
+    before_tool_callback=validate_and_intercept_trades,
 )
 
 app = App(
