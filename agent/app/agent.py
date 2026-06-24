@@ -129,9 +129,7 @@ Our rules:
 5. Identify which stocks/assets to hold, buy, or liquidate based on the 3 signals (Sentiment, Momentum, and Analyst recommendation) over the weekly historical range.
 6. TLT is our treasury option (safe-haven / fallback asset). If tech/AI signals are generally weak, crashing, or there are fewer than 3 strong AI positions, allocate the defensive portion (or all) of the budget to TLT to protect capital.
 7. Liquidate positions (sell 100%) for any asset that is no longer recommended to hold.
-8. Log the reasoning for every single action (BUY, SELL, or HOLD) you make.
-
-Execute trades as needed by using the Robinhood MCP tools. Once finished, summarize the actions taken."""
+8. Log the reasoning for every executed transaction (BUY, SELL, or LIQUIDATE) you perform by calling insert_trade_record. Use exactly "BUY", "SELL", or "LIQUIDATE" for the action parameter. Do NOT log or call insert_trade_record for HOLD decisions, as they are not active trades. """
 
 
 async def validate_and_intercept_trades(tool, args, tool_context) -> dict | None:

@@ -123,7 +123,7 @@ def load_latest_recommendations() -> pd.DataFrame:
 def load_trade_history() -> pd.DataFrame:
     """Loads the entire execution trade history log."""
     query = f"""
-        SELECT timestamp, ticker, action, amount_usd, reasoning
+        SELECT timestamp, ticker, action, amount_usd, reasoning, COALESCE(dry_run, TRUE) as dry_run
         FROM `{project}.{dataset_id}.trade_history`
         ORDER BY timestamp DESC
     """
@@ -245,42 +245,69 @@ st.markdown("<hr/>", unsafe_allow_html=True)
 # 6. Paginated & Filterable Trade History
 st.subheader("Executed Trade History Log")
 if not trades_df.empty:
-    # Filter controls
-    col_search, col_action = st.columns([3, 1])
-    with col_search:
-        search_ticker = st.text_input("Filter by Ticker symbol:", "").strip().upper()
-    with col_action:
-        action_filter = st.selectbox("Filter by Action:", ["All", "BUY", "SELL", "LIQUIDATE", "HOLD"])
-        
-    filtered_df = trades_df.copy()
+    # Checkbox to toggle simulated / dry-runs (default off)
+    show_simulated = st.checkbox("Show Simulated / Dry Run Trades", value=False)
     
-    # Apply search filter
-    if search_ticker:
-        filtered_df = filtered_df[filtered_df["ticker"].str.contains(search_ticker, case=False)]
-        
-    # Apply action dropdown filter
-    if action_filter != "All":
-        filtered_df = filtered_df[filtered_df["action"] == action_filter]
-        
-    # Format and present trade table
-    filtered_df["amount_usd"] = filtered_df["amount_usd"].map(lambda x: f"${x:.2f}")
-    # Convert timestamp to human-readable datetime string
-    filtered_df["timestamp"] = pd.to_datetime(filtered_df["timestamp"]).dt.strftime("%Y-%m-%d %H:%M:%S")
+    # Pre-process trades: Filter out HOLDs and normalize signal names to BUY / SELL
+    processed_df = trades_df.copy()
+    processed_df = processed_df[~processed_df["action"].isin(["HOLD"])]
     
-    filtered_df.columns = ["Timestamp (UTC)", "Ticker", "Action", "Amount", "Reasoning / Trade Thesis"]
+    action_map = {
+        "STRONG BUY": "BUY",
+        "BUY": "BUY",
+        "SELL": "SELL",
+        "LIQUIDATE": "SELL"
+    }
+    processed_df["action"] = processed_df["action"].map(lambda a: action_map.get(a, a))
     
-    # Paginate by showing standard Streamlit scrollable dataframe
-    st.dataframe(
-        filtered_df,
-        hide_index=True,
-        use_container_width=True,
-        column_config={
-            "Timestamp (UTC)": st.column_config.TextColumn(width="medium"),
-            "Ticker": st.column_config.TextColumn(width="small"),
-            "Action": st.column_config.TextColumn(width="small"),
-            "Amount": st.column_config.TextColumn(width="small"),
-            "Reasoning / Trade Thesis": st.column_config.TextColumn(width="large")
-        }
-    )
+    # Filter out dry runs if checkbox is unchecked
+    if not show_simulated:
+        processed_df = processed_df[~processed_df["dry_run"]]
+        
+    if not processed_df.empty:
+        # Filter controls
+        col_search, col_action = st.columns([3, 1])
+        with col_search:
+            search_ticker = st.text_input("Filter by Ticker symbol:", "").strip().upper()
+        with col_action:
+            action_filter = st.selectbox("Filter by Action:", ["All", "BUY", "SELL"])
+            
+        filtered_df = processed_df.copy()
+        
+        # Apply search filter
+        if search_ticker:
+            filtered_df = filtered_df[filtered_df["ticker"].str.contains(search_ticker, case=False)]
+            
+        # Apply action dropdown filter
+        if action_filter != "All":
+            filtered_df = filtered_df[filtered_df["action"] == action_filter]
+            
+        if not filtered_df.empty:
+            # Format and present trade table
+            filtered_df["amount_usd"] = filtered_df["amount_usd"].map(lambda x: f"${x:.2f}")
+            # Convert timestamp to human-readable datetime string
+            filtered_df["timestamp"] = pd.to_datetime(filtered_df["timestamp"]).dt.strftime("%Y-%m-%d %H:%M:%S")
+            
+            # Select columns to display (hide dry_run column)
+            disp_df = filtered_df[["timestamp", "ticker", "action", "amount_usd", "reasoning"]].copy()
+            disp_df.columns = ["Timestamp (UTC)", "Ticker", "Action", "Amount", "Reasoning / Trade Thesis"]
+            
+            # Paginate by showing standard Streamlit scrollable dataframe
+            st.dataframe(
+                disp_df,
+                hide_index=True,
+                use_container_width=True,
+                column_config={
+                    "Timestamp (UTC)": st.column_config.TextColumn(width="medium"),
+                    "Ticker": st.column_config.TextColumn(width="small"),
+                    "Action": st.column_config.TextColumn(width="small"),
+                    "Amount": st.column_config.TextColumn(width="small"),
+                    "Reasoning / Trade Thesis": st.column_config.TextColumn(width="large")
+                }
+            )
+        else:
+            st.info("No executed trades match the search filters.")
+    else:
+        st.info("No live executed trades logged yet. (Check 'Show Simulated / Dry Run Trades' to view simulated execution logs).")
 else:
     st.info("No executed trades logged in the database yet.")

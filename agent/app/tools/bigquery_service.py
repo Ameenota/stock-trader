@@ -77,6 +77,7 @@ def setup_bigquery(dataset_id: str = "portfolio_analytics") -> None:
         bigquery.SchemaField("amount_usd", "FLOAT", mode="REQUIRED"),
         bigquery.SchemaField("timestamp", "TIMESTAMP", mode="REQUIRED"),
         bigquery.SchemaField("reasoning", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("dry_run", "BOOLEAN", mode="NULLABLE"),
     ]
     trade_table = bigquery.Table(trade_table_id, schema=trade_schema)
     try:
@@ -238,9 +239,10 @@ def insert_trade_record(
     amount_usd: float, 
     timestamp: float | None = None, 
     reasoning: str | None = None,
+    dry_run: bool | None = None,
     dataset_id: str = "portfolio_analytics"
 ) -> None:
-    """Inserts a trade receipt (ticker, action, amount_usd, timestamp, reasoning) into the trade_history table.
+    """Inserts a trade receipt (ticker, action, amount_usd, timestamp, reasoning, dry_run) into the trade_history table.
 
     Args:
         ticker: The stock ticker symbol.
@@ -248,8 +250,10 @@ def insert_trade_record(
         amount_usd: Total dollar amount of the transaction.
         timestamp: Unix timestamp. Defaults to time.time().
         reasoning: Text explaining the trade logic.
+        dry_run: Whether this was a simulated/dry-run trade. Defaults to checking SKIP_LIVE_TRADES env.
         dataset_id: The BigQuery dataset ID.
     """
+    import os
     client = get_bigquery_client()
     table_id = f"{client.project}.{dataset_id}.trade_history"
 
@@ -258,12 +262,16 @@ def insert_trade_record(
         
     timestamp_str = datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
 
+    if dry_run is None:
+        dry_run = os.environ.get("SKIP_LIVE_TRADES", "false").lower() == "true"
+
     row_to_insert = {
         "ticker": ticker,
         "action": action,
         "amount_usd": float(amount_usd),
         "timestamp": timestamp_str,
-        "reasoning": reasoning
+        "reasoning": reasoning,
+        "dry_run": bool(dry_run)
     }
     
     try:

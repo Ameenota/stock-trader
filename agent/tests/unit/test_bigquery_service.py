@@ -87,6 +87,10 @@ def test_setup_bigquery(mock_bq_client):
     assert trade_table.schema[2].field_type == "FLOAT"
     assert trade_table.schema[3].name == "timestamp"
     assert trade_table.schema[3].field_type == "TIMESTAMP"
+    assert trade_table.schema[4].name == "reasoning"
+    assert trade_table.schema[4].field_type == "STRING"
+    assert trade_table.schema[5].name == "dry_run"
+    assert trade_table.schema[5].field_type == "BOOLEAN"
 
     # Verify third table (portfolio_snapshot)
     snapshot_table = mock_bq_client.create_table.call_args_list[2][0][0]
@@ -268,6 +272,7 @@ def test_insert_trade_record(mock_bq_client):
         action="STRONG BUY",
         amount_usd=50.0,
         timestamp=1700000000.0,
+        dry_run=False,
         dataset_id="test_dataset"
     )
 
@@ -278,7 +283,8 @@ def test_insert_trade_record(mock_bq_client):
             "action": "STRONG BUY",
             "amount_usd": 50.0,
             "timestamp": "2023-11-14T22:13:20+00:00",
-            "reasoning": None
+            "reasoning": None,
+            "dry_run": False
         }
     ]
 
@@ -300,6 +306,7 @@ def test_insert_trade_record_with_reasoning(mock_bq_client):
         amount_usd=50.0,
         timestamp=1700000000.0,
         reasoning="Market demands buy",
+        dry_run=False,
         dataset_id="test_dataset"
     )
 
@@ -310,7 +317,8 @@ def test_insert_trade_record_with_reasoning(mock_bq_client):
             "action": "STRONG BUY",
             "amount_usd": 50.0,
             "timestamp": "2023-11-14T22:13:20+00:00",
-            "reasoning": "Market demands buy"
+            "reasoning": "Market demands buy",
+            "dry_run": False
         }
     ]
 
