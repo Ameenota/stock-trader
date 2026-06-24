@@ -1,3 +1,7 @@
+import os
+# Force native DNS resolution for gRPC to prevent macOS IPv6 resolution failures
+os.environ["GRPC_DNS_RESOLVER"] = "native"
+
 import json
 import pandas as pd
 import streamlit as st
