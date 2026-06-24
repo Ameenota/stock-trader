@@ -13,15 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import datetime
-from zoneinfo import ZoneInfo
+import os
 
 from google.adk.agents import Agent
 from google.adk.apps import App
 from google.adk.models import Gemini
 from google.genai import types
-
-import os
 
 # Set to True to use Vertex AI (GCP), or False to use Google AI Studio (GEMINI_API_KEY)
 USE_VERTEX_AI = True
@@ -34,39 +31,6 @@ if USE_VERTEX_AI:
     os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "True"
 else:
     os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "False"
-
-
-def get_weather(query: str) -> str:
-    """Simulates a web search. Use it get information on weather.
-
-    Args:
-        query: A string containing the location to get weather information for.
-
-    Returns:
-        A string with the simulated weather information for the queried location.
-    """
-    if "sf" in query.lower() or "san francisco" in query.lower():
-        return "It's 60 degrees and foggy."
-    return "It's 90 degrees and sunny."
-
-
-def get_current_time(query: str) -> str:
-    """Simulates getting the current time for a city.
-
-    Args:
-        city: The name of the city to get the current time for.
-
-    Returns:
-        A string with the current time information.
-    """
-    if "sf" in query.lower() or "san francisco" in query.lower():
-        tz_identifier = "America/Los_Angeles"
-    else:
-        return f"Sorry, I don't have timezone information for query: {query}."
-
-    tz = ZoneInfo(tz_identifier)
-    now = datetime.datetime.now(tz)
-    return f"The current time for query {query} is {now.strftime('%Y-%m-%d %H:%M:%S %Z%z')}"
 
 
 from google.adk.tools.mcp_tool import McpToolset
@@ -92,10 +56,68 @@ robinhood_toolset = McpToolset(
     )
 )
 
+from app.tools.data_ingestion import ingest_market_news
+from app.tools.ranking import SentimentAnalysisResponse, process_sentiment_rankings
+from google.adk.runners import Runner
+from google.adk.sessions import InMemorySessionService
+from google.adk.tools import ToolContext
+
+sentiment_agent = Agent(
+    name="sentiment_agent",
+    model=Gemini(
+        model="gemini-flash-latest",
+        retry_options=types.HttpRetryOptions(attempts=3),
+    ),
+    instruction="""You are a professional stock market sentiment analyst.
+Analyze the sentiment of the target assets based strictly on the provided news dictionary.
+For each ticker present as a key in the news dictionary, check the news headlines and summaries.
+Assign a raw_score (float from -1.0 to 1.0) and write a concise thesis explaining your score.
+If the news list for a ticker is empty or has no recent news, you MUST return a raw_score of 0.0 and a thesis explaining that no recent news was found for this ticker.
+You MUST output exactly one analysis entry for each and every ticker present in the keys of the provided news dictionary.""",
+    output_schema=SentimentAnalysisResponse,
+    output_key="sentiment_result",
+)
+
+async def analyze_and_rank_portfolio(tool_context: ToolContext) -> dict:
+    """Ingests latest 24h market news, runs sentiment analysis via the Gemini sentiment agent,
+    and runs deterministic Python logic to sort, rank, and assign trade signals to the portfolio.
+
+    Returns:
+        A dictionary containing the ranked portfolio results with relative ranks and trade signals.
+    """
+    # 1. Ingest news
+    news_dict = ingest_market_news()
+
+    # 2. Run sentiment_agent using a separate sub-session
+    session_service = InMemorySessionService()
+    session = await session_service.create_session(user_id="system", app_name="sentiment")
+    runner = Runner(agent=sentiment_agent, session_service=session_service, app_name="sentiment")
+
+    message = types.Content(
+        role="user",
+        parts=[types.Part.from_text(text=f"Please analyze these news articles:\n{news_dict}")]
+    )
+
+    async for _ in runner.run_async(
+        new_message=message,
+        user_id="system",
+        session_id=session.id,
+    ):
+        pass
+
+    response_obj = session.state.get("sentiment_result")
+    if not response_obj:
+        return {"error": "Failed to retrieve structured sentiment analysis from Gemini."}
+
+    # 3. Process with deterministic Python ranking logic
+    ranked_results = process_sentiment_rankings(response_obj)
+
+    return {"ranked_portfolio": ranked_results}
+
 import sys
 
 # Define tools list, conditionally adding robinhood_toolset if not in a test environment
-agent_tools = [get_weather, get_current_time]
+agent_tools = [analyze_and_rank_portfolio]
 if not os.environ.get("INTEGRATION_TEST") and "pytest" not in sys.modules:
     agent_tools.append(robinhood_toolset)
 
