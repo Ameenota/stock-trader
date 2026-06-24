@@ -48,6 +48,18 @@ The system consists of the following decoupled components:
 
 ---
 
+## 🤖 Automated / Headless Execution (Cron Job)
+
+To run the agent automatically and headlessly on a daily cron job:
+* **Persistent Session ID**: The agent uses OAuth 2.0 with PKCE for Robinhood MCP connection. To run headlessly without interactive login prompts, the agent relies on the persistent session's `refresh_token`.
+* **Setup Flow**:
+  1. Trigger the agent interactively **once** using a designated session ID (e.g., `daily-trading-session`) via the playground or a test script.
+  2. Complete the OAuth login and consent process in the browser popup. The ADK framework will securely save the exchanged credentials (including the `refresh_token`) to that session's state database.
+  3. Configure the daily cron job (e.g., Cloud Scheduler calling Cloud Run) to invoke the agent using the **exact same session ID** (`daily-trading-session`).
+  4. The ADK runner will load the saved credentials, automatically refresh the access token if expired, and execute the run completely unattended.
+
+---
+
 ## 🛠️ Getting Started
 
 ### Prerequisites

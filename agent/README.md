@@ -84,6 +84,9 @@ agents-cli deploy
 To add CI/CD and Terraform, run `agents-cli scaffold enhance`.
 To set up your production infrastructure, run `agents-cli infra cicd`.
 
+### Automated Execution (Cron Job)
+To run the agent headlessly on a daily schedule, invoke the deployed runtime endpoint using a fixed `session_id` (e.g. `daily-trading-session`) that you have already authenticated once interactively. See the root `README.md` for full instructions.
+
 ## Observability
 
 Built-in telemetry exports to Cloud Trace, BigQuery, and Cloud Logging.

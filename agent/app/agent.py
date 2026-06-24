@@ -24,7 +24,7 @@ from google.genai import types
 import os
 
 # Set to True to use Vertex AI (GCP), or False to use Google AI Studio (GEMINI_API_KEY)
-USE_VERTEX_AI = False
+USE_VERTEX_AI = True
 
 if USE_VERTEX_AI:
     import google.auth
@@ -69,6 +69,36 @@ def get_current_time(query: str) -> str:
     return f"The current time for query {query} is {now.strftime('%Y-%m-%d %H:%M:%S %Z%z')}"
 
 
+from google.adk.tools.mcp_tool import McpToolset
+from google.adk.tools.mcp_tool.mcp_session_manager import StdioConnectionParams
+from mcp import StdioServerParameters
+
+# We delegate remote connection/auth to `mcp-remote` via standard stdio transport.
+# Why this approach:
+# 1. Robinhood MCP server uses Public OAuth 2.0 PKCE with dynamic client registration (no client_secret).
+# 2. ADK's built-in ExtendedOAuth2 scheme requires a static client_secret in raw_auth_credential
+#    and will raise a validation ValueError if it's missing.
+# 3. `mcp-remote` runs as a Node.js background process, handles public client registration,
+#    launches the browser, completes token exchanges, and securely saves the credentials to `~/.mcp-auth/`.
+# 4. Timeout is set to 300 seconds (5 mins) to give the user enough time to complete
+#    browser login and MFA verification without the ADK aborting and restarting the session.
+robinhood_toolset = McpToolset(
+    connection_params=StdioConnectionParams(
+        server_params=StdioServerParameters(
+            command="npx",
+            args=["-y", "mcp-remote", "https://agent.robinhood.com/mcp/trading"]
+        ),
+        timeout=300.0  # 5-minute timeout to allow interactive OAuth sign-in
+    )
+)
+
+import sys
+
+# Define tools list, conditionally adding robinhood_toolset if not in a test environment
+agent_tools = [get_weather, get_current_time]
+if not os.environ.get("INTEGRATION_TEST") and "pytest" not in sys.modules:
+    agent_tools.append(robinhood_toolset)
+
 root_agent = Agent(
     name="root_agent",
     model=Gemini(
@@ -76,7 +106,7 @@ root_agent = Agent(
         retry_options=types.HttpRetryOptions(attempts=3),
     ),
     instruction="You are a helpful AI assistant designed to provide accurate and useful information.",
-    tools=[get_weather, get_current_time],
+    tools=agent_tools,
 )
 
 app = App(

@@ -39,6 +39,9 @@ def agent_app(monkeypatch: pytest.MonkeyPatch) -> AgentEngineApp:
 
     from app.agent_runtime_app import agent_runtime
 
+    # Mock project_id to avoid calling GCP resource manager API in tests
+    monkeypatch.setattr(agent_runtime, "project_id", lambda *args, **kwargs: "dummy-project")
+
     agent_runtime.set_up()
     return agent_runtime
 
