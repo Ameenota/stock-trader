@@ -61,6 +61,33 @@ async def test_validate_and_intercept_trades_invalid_symbol():
 
 
 @pytest.mark.asyncio
+async def test_validate_and_intercept_trades_list_symbols_valid():
+    """Verify that a valid list of stock symbols passes checks."""
+    mock_tool = MagicMock()
+    mock_tool.name = "get_quotes"
+    
+    args = {"account_number": "48661", "symbols": ["MU", "DELL", "TSM"]}
+    mock_context = MagicMock()
+
+    res = await validate_and_intercept_trades(mock_tool, args, mock_context)
+    assert res is None  # Pass-through
+
+
+@pytest.mark.asyncio
+async def test_validate_and_intercept_trades_list_symbols_invalid():
+    """Verify that an invalid stock symbol in a list raises a ValueError."""
+    mock_tool = MagicMock()
+    mock_tool.name = "get_quotes"
+    
+    # MSFT is not in our 10-asset universe
+    args = {"account_number": "48661", "symbols": ["MU", "MSFT", "TSM"]}
+    mock_context = MagicMock()
+
+    with pytest.raises(ValueError, match="outside the authorized 10-asset universe"):
+        await validate_and_intercept_trades(mock_tool, args, mock_context)
+
+
+@pytest.mark.asyncio
 async def test_validate_and_intercept_trades_dry_run_execution():
     """Verify that SKIP_LIVE_TRADES=true intercepts write operations and mocks success."""
     # Set dry-run env flag

@@ -156,11 +156,22 @@ async def validate_and_intercept_trades(tool, args, tool_context) -> dict | None
     for key in ticker_keys:
         val = args.get(key)
         if val:
-            val_str = str(val).strip().upper()
-            if val_str not in ALLOWED_TICKERS:
-                raise ValueError(
-                    f"Security Exception: Operation rejected. Ticker '{val_str}' is outside the authorized 10-asset universe."
-                )
+            if isinstance(val, (list, tuple)):
+                tickers_to_check = val
+            elif isinstance(val, str):
+                if "," in val:
+                    tickers_to_check = [t.strip() for t in val.split(",")]
+                else:
+                    tickers_to_check = [val]
+            else:
+                tickers_to_check = [str(val)]
+                
+            for ticker in tickers_to_check:
+                ticker_str = str(ticker).strip().upper()
+                if ticker_str and ticker_str not in ALLOWED_TICKERS:
+                    raise ValueError(
+                        f"Security Exception: Operation rejected. Ticker '{ticker_str}' is outside the authorized 10-asset universe."
+                    )
 
     # 3. Dry-Run Interceptor: block order modifications and return simulated success
     if os.environ.get("SKIP_LIVE_TRADES", "false").lower() == "true":
