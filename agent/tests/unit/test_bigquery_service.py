@@ -115,7 +115,8 @@ def test_insert_sentiment(mock_bq_client):
         }
     ]
     
-    mock_bq_client.insert_rows_json.return_value = []  # No errors
+    mock_job = MagicMock()
+    mock_bq_client.load_table_from_json.return_value = mock_job
 
     # Run function specifying timestamp to ensure consistency
     timestamp_str = "2026-06-24T18:00:00Z"
@@ -156,12 +157,15 @@ def test_insert_sentiment(mock_bq_client):
         }
     ]
 
-    mock_bq_client.insert_rows_json.assert_called_once_with(expected_table_id, expected_rows)
+    mock_bq_client.load_table_from_json.assert_called_once()
+    call_args = mock_bq_client.load_table_from_json.call_args
+    assert call_args[0][0] == expected_rows
+    assert call_args[0][1] == expected_table_id
 
 
 def test_insert_sentiment_error(mock_bq_client):
     """Verifies that insert_sentiment raises a RuntimeError if the client returns insertion errors."""
-    mock_bq_client.insert_rows_json.return_value = [{"error": "some bigquery issue"}]
+    mock_bq_client.load_table_from_json.side_effect = Exception("some bigquery issue")
 
     with pytest.raises(RuntimeError, match="Failed to insert sentiment rows into BigQuery"):
         insert_sentiment([{"ticker": "NVDA", "raw_score": 0.8, "relative_rank": 10, "signal": "STRONG BUY"}])
@@ -235,7 +239,8 @@ def test_get_latest_signals(mock_bq_client):
 
 def test_insert_trade_record(mock_bq_client):
     """Verifies that insert_trade_record formats and logs trade transactions correctly."""
-    mock_bq_client.insert_rows_json.return_value = [] # No errors
+    mock_job = MagicMock()
+    mock_bq_client.load_table_from_json.return_value = mock_job
 
     # 1700000000 unix timestamp represents 2023-11-14T22:13:20+00:00
     insert_trade_record(
@@ -257,12 +262,16 @@ def test_insert_trade_record(mock_bq_client):
         }
     ]
 
-    mock_bq_client.insert_rows_json.assert_called_once_with(expected_table_id, expected_rows)
+    mock_bq_client.load_table_from_json.assert_called_once()
+    call_args = mock_bq_client.load_table_from_json.call_args
+    assert call_args[0][0] == expected_rows
+    assert call_args[0][1] == expected_table_id
 
 
 def test_insert_trade_record_with_reasoning(mock_bq_client):
     """Verifies that insert_trade_record formats and logs trade transactions with reasoning correctly."""
-    mock_bq_client.insert_rows_json.return_value = [] # No errors
+    mock_job = MagicMock()
+    mock_bq_client.load_table_from_json.return_value = mock_job
 
     # 1700000000 unix timestamp represents 2023-11-14T22:13:20+00:00
     insert_trade_record(
@@ -285,12 +294,15 @@ def test_insert_trade_record_with_reasoning(mock_bq_client):
         }
     ]
 
-    mock_bq_client.insert_rows_json.assert_called_once_with(expected_table_id, expected_rows)
+    mock_bq_client.load_table_from_json.assert_called_once()
+    call_args = mock_bq_client.load_table_from_json.call_args
+    assert call_args[0][0] == expected_rows
+    assert call_args[0][1] == expected_table_id
 
 
 def test_insert_trade_record_error(mock_bq_client):
     """Verifies that insert_trade_record raises a RuntimeError if client insertion fails."""
-    mock_bq_client.insert_rows_json.return_value = [{"error": "bigquery insertion failure"}]
+    mock_bq_client.load_table_from_json.side_effect = Exception("bigquery insertion failure")
 
     with pytest.raises(RuntimeError, match="Failed to insert trade record into BigQuery"):
         insert_trade_record(ticker="NVDA", action="STRONG BUY", amount_usd=100.0)

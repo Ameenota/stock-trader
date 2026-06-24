@@ -144,9 +144,14 @@ def insert_sentiment(
             "price_to_ma_ratio": ratio_val
         })
         
-    errors = client.insert_rows_json(table_id, rows_to_insert)
-    if errors:
-        raise RuntimeError(f"Failed to insert sentiment rows into BigQuery: {errors}")
+    try:
+        job_config = bigquery.LoadJobConfig(
+            write_disposition="WRITE_APPEND",
+        )
+        job = client.load_table_from_json(rows_to_insert, table_id, job_config=job_config)
+        job.result()
+    except Exception as e:
+        raise RuntimeError(f"Failed to insert sentiment rows into BigQuery: {e}")
 
 
 def get_latest_signals(
@@ -239,9 +244,14 @@ def insert_trade_record(
         "reasoning": reasoning
     }
     
-    errors = client.insert_rows_json(table_id, [row_to_insert])
-    if errors:
-        raise RuntimeError(f"Failed to insert trade record into BigQuery: {errors}")
+    try:
+        job_config = bigquery.LoadJobConfig(
+            write_disposition="WRITE_APPEND",
+        )
+        job = client.load_table_from_json([row_to_insert], table_id, job_config=job_config)
+        job.result()
+    except Exception as e:
+        raise RuntimeError(f"Failed to insert trade record into BigQuery: {e}")
 
 
 def get_historical_metrics(
