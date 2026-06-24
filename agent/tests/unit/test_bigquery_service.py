@@ -48,9 +48,9 @@ def test_setup_bigquery(mock_bq_client):
     # Assert tables were created (2 tables)
     assert mock_bq_client.create_table.call_count == 2
     
-    # Verify first table (infrastructure_sentiment)
+    # Verify first table (infrastructure_market_metrics)
     sentiment_table = mock_bq_client.create_table.call_args_list[0][0][0]
-    assert sentiment_table.table_id == "infrastructure_sentiment"
+    assert sentiment_table.table_id == "infrastructure_market_metrics"
     assert sentiment_table.dataset_id == "test_dataset"
     assert sentiment_table.project == "test-project"
     assert sentiment_table.schema[0].name == "ticker"
@@ -63,6 +63,16 @@ def test_setup_bigquery(mock_bq_client):
     assert sentiment_table.schema[5].field_type == "TIMESTAMP"
     assert sentiment_table.schema[6].name == "raw_news"
     assert sentiment_table.schema[6].field_type == "STRING"
+    assert sentiment_table.schema[7].name == "analyst_consensus"
+    assert sentiment_table.schema[7].field_type == "STRING"
+    assert sentiment_table.schema[8].name == "target_price"
+    assert sentiment_table.schema[8].field_type == "FLOAT"
+    assert sentiment_table.schema[9].name == "current_price"
+    assert sentiment_table.schema[9].field_type == "FLOAT"
+    assert sentiment_table.schema[10].name == "moving_average_20d"
+    assert sentiment_table.schema[10].field_type == "FLOAT"
+    assert sentiment_table.schema[11].name == "price_to_ma_ratio"
+    assert sentiment_table.schema[11].field_type == "FLOAT"
 
     # Verify second table (trade_history)
     trade_table = mock_bq_client.create_table.call_args_list[1][0][0]
@@ -88,7 +98,12 @@ def test_insert_sentiment(mock_bq_client):
             "thesis": "Strong AI growth",
             "relative_rank": 10,
             "signal": "STRONG BUY",
-            "raw_news": [{"title": "News 1", "summary": "Summary 1"}]
+            "raw_news": [{"title": "News 1", "summary": "Summary 1"}],
+            "analyst_consensus": "buy",
+            "target_price": 150.0,
+            "current_price": 140.0,
+            "moving_average_20d": 135.0,
+            "price_to_ma_ratio": 1.037
         },
         {
             "ticker": "SMCI",
@@ -109,7 +124,7 @@ def test_insert_sentiment(mock_bq_client):
 
     insert_sentiment(ranked_portfolio, dataset_id="test_dataset")
 
-    expected_table_id = "test-project.test_dataset.infrastructure_sentiment"
+    expected_table_id = "test-project.test_dataset.infrastructure_market_metrics"
     expected_rows = [
         {
             "ticker": "NVDA",
@@ -118,7 +133,12 @@ def test_insert_sentiment(mock_bq_client):
             "relative_rank": 10,
             "signal": "STRONG BUY",
             "timestamp": timestamp_str,
-            "raw_news": '[{"title": "News 1", "summary": "Summary 1"}]'
+            "raw_news": '[{"title": "News 1", "summary": "Summary 1"}]',
+            "analyst_consensus": "buy",
+            "target_price": 150.0,
+            "current_price": 140.0,
+            "moving_average_20d": 135.0,
+            "price_to_ma_ratio": 1.037
         },
         {
             "ticker": "SMCI",
@@ -127,7 +147,12 @@ def test_insert_sentiment(mock_bq_client):
             "relative_rank": 1,
             "signal": "LIQUIDATE",
             "timestamp": timestamp_str,
-            "raw_news": "[]"
+            "raw_news": "[]",
+            "analyst_consensus": None,
+            "target_price": None,
+            "current_price": None,
+            "moving_average_20d": None,
+            "price_to_ma_ratio": None
         }
     ]
 
@@ -152,6 +177,11 @@ def test_get_latest_signals(mock_bq_client):
     row1.relative_rank = 10
     row1.signal = "STRONG BUY"
     row1.timestamp = datetime(2026, 6, 24, 18, 0, 0, tzinfo=timezone.utc)
+    row1.analyst_consensus = "buy"
+    row1.target_price = 150.0
+    row1.current_price = 140.0
+    row1.moving_average_20d = 135.0
+    row1.price_to_ma_ratio = 1.037
 
     row2 = MagicMock()
     row2.ticker = "SMCI"
@@ -160,6 +190,11 @@ def test_get_latest_signals(mock_bq_client):
     row2.relative_rank = 1
     row2.signal = "LIQUIDATE"
     row2.timestamp = datetime(2026, 6, 24, 18, 0, 0, tzinfo=timezone.utc)
+    row2.analyst_consensus = None
+    row2.target_price = None
+    row2.current_price = None
+    row2.moving_average_20d = None
+    row2.price_to_ma_ratio = None
 
     mock_results = [row1, row2]
     
@@ -175,7 +210,7 @@ def test_get_latest_signals(mock_bq_client):
     query_str = mock_bq_client.query.call_args[0][0]
     
     # Check that query targets the correct table and filters correctly
-    assert "`test-project.test_dataset.infrastructure_sentiment`" in query_str
+    assert "`test-project.test_dataset.infrastructure_market_metrics`" in query_str
     assert "WHERE DATE(timestamp) = @target_date" in query_str
     assert "signal IN ('STRONG BUY', 'LIQUIDATE')" in query_str
 
@@ -188,10 +223,14 @@ def test_get_latest_signals(mock_bq_client):
     assert signals[0]["ticker"] == "NVDA"
     assert signals[0]["signal"] == "STRONG BUY"
     assert signals[0]["timestamp"] == "2026-06-24T18:00:00+00:00"
+    assert signals[0]["analyst_consensus"] == "buy"
+    assert signals[0]["target_price"] == 150.0
 
     assert signals[1]["ticker"] == "SMCI"
     assert signals[1]["signal"] == "LIQUIDATE"
     assert signals[1]["timestamp"] == "2026-06-24T18:00:00+00:00"
+    assert signals[1]["analyst_consensus"] is None
+    assert signals[1]["target_price"] is None
 
 
 def test_insert_trade_record(mock_bq_client):
@@ -230,7 +269,7 @@ def test_insert_trade_record_error(mock_bq_client):
 
 def test_setup_bigquery_updates_schema(mock_bq_client):
     """Verifies that setup_bigquery updates the schema if columns are missing."""
-    # Simulate table existing, but missing 'raw_news'
+    # Simulate table existing, but missing 'analyst_consensus'
     mock_table = MagicMock()
     mock_table.schema = [
         bigquery.SchemaField("ticker", "STRING", mode="REQUIRED"),
@@ -239,12 +278,14 @@ def test_setup_bigquery_updates_schema(mock_bq_client):
         bigquery.SchemaField("relative_rank", "INTEGER", mode="REQUIRED"),
         bigquery.SchemaField("signal", "STRING", mode="REQUIRED"),
         bigquery.SchemaField("timestamp", "TIMESTAMP", mode="REQUIRED"),
+        bigquery.SchemaField("raw_news", "STRING", mode="NULLABLE"),
     ]
     mock_bq_client.get_table.return_value = mock_table
 
     setup_bigquery(dataset_id="test_dataset")
 
-    # Assert update_table was called to append raw_news
+    # Assert update_table was called to append the new columns
     assert mock_bq_client.update_table.call_count >= 1
     updated_table = mock_bq_client.update_table.call_args[0][0]
-    assert any(field.name == "raw_news" for field in updated_table.schema)
+    assert any(field.name == "analyst_consensus" for field in updated_table.schema)
+    assert any(field.name == "target_price" for field in updated_table.schema)

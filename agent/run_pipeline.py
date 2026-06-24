@@ -24,7 +24,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 # in batch mode for news sentiment analysis.
 os.environ["INTEGRATION_TEST"] = "TRUE"
 
-from app.tools.data_ingestion import ingest_market_news
+from app.tools.data_ingestion import ingest_market_data
 from app.tools.ranking import process_sentiment_rankings
 from app.tools.bigquery_service import setup_bigquery, insert_sentiment
 from app.agent import sentiment_agent
@@ -34,15 +34,23 @@ from google.genai import types
 
 def print_portfolio_table(portfolio: list) -> None:
     """Renders a beautiful ASCII table of the ranked portfolio and trade signals."""
-    print("\n" + "="*95)
-    print(f"{'Ticker':<8} | {'Raw Score':<9} | {'Rank (1-10)':<12} | {'Signal':<11} | {'Thesis'}")
-    print("="*95)
+    print("\n" + "="*145)
+    print(f"{'Ticker':<6} | {'Score':<6} | {'Rank':<5} | {'Signal':<11} | {'Price':<8} | {'20d SMA':<8} | {'Price/MA':<8} | {'Consensus':<10} | {'Thesis'}")
+    print("="*145)
     for item in portfolio:
         thesis = item.get("thesis", "")
         # Truncate thesis if it's too long for a clean terminal output
-        truncated_thesis = thesis[:50] + "..." if len(thesis) > 50 else thesis
-        print(f"{item['ticker']:<8} | {item['raw_score']:<9.2f} | {item['relative_rank']:<12} | {item['signal']:<11} | {truncated_thesis}")
-    print("="*95 + "\n")
+        truncated_thesis = thesis[:60] + "..." if len(thesis) > 60 else thesis
+        price = item.get("current_price")
+        price_str = f"${price:.2f}" if price is not None else "N/A"
+        ma = item.get("moving_average_20d")
+        ma_str = f"${ma:.2f}" if ma is not None else "N/A"
+        ratio = item.get("price_to_ma_ratio")
+        ratio_str = f"{ratio:.3f}" if ratio is not None else "N/A"
+        consensus = item.get("analyst_consensus") or "N/A"
+        
+        print(f"{item['ticker']:<6} | {item['raw_score']:<6.2f} | {item['relative_rank']:<5} | {item['signal']:<11} | {price_str:<8} | {ma_str:<8} | {ratio_str:<8} | {consensus:<10} | {truncated_thesis}")
+    print("="*145 + "\n")
 
 async def run_pipeline(dataset_id: str = "portfolio_analytics") -> None:
     print(f"[{datetime.now(timezone.utc).isoformat()}] Starting AI Infrastructure Analyst pipeline...")
@@ -52,16 +60,19 @@ async def run_pipeline(dataset_id: str = "portfolio_analytics") -> None:
     setup_bigquery(dataset_id=dataset_id)
     print("   Dataset and tables verified/created successfully.")
 
-    # Step 2: Ingest Latest Market News
-    print("\n2. Ingesting latest 24h market news from yfinance...")
-    news_dict = ingest_market_news()
-    print(f"   Successfully fetched news feed for {len(news_dict)} tickers.")
+    # Step 2: Ingest Latest Market News and Metrics
+    print("\n2. Ingesting latest 24h market news and metrics from yfinance...")
+    market_data = ingest_market_data()
+    print(f"   Successfully fetched market data for {len(market_data)} tickers.")
 
     # Step 3: Run structured sentiment agent (Part 1 - LLM call)
     print("\n3. Triggering Gemini 1.5 Flash sentiment analysis...")
     session_service = InMemorySessionService()
     session = await session_service.create_session(user_id="cron_job", app_name="sentiment")
     runner = Runner(agent=sentiment_agent, session_service=session_service, app_name="sentiment")
+
+    # Extract only news list for the LLM agent
+    news_dict = {ticker: data.get("news", []) for ticker, data in market_data.items()}
 
     message = types.Content(
         role="user",
@@ -88,15 +99,21 @@ async def run_pipeline(dataset_id: str = "portfolio_analytics") -> None:
     print("\n4. Running deterministic ranking and signal assignment...")
     ranked_portfolio = process_sentiment_rankings(sentiment_result)
 
-    # Attach the raw news stories to each portfolio item for BigQuery auditing
+    # Attach raw news stories and technical metrics to each portfolio item for BigQuery auditing
     for item in ranked_portfolio:
         ticker = item["ticker"]
-        item["raw_news"] = news_dict.get(ticker, [])
+        ticker_data = market_data.get(ticker, {})
+        item["raw_news"] = ticker_data.get("news", [])
+        item["analyst_consensus"] = ticker_data.get("analyst_consensus")
+        item["target_price"] = ticker_data.get("target_price")
+        item["current_price"] = ticker_data.get("current_price")
+        item["moving_average_20d"] = ticker_data.get("moving_average_20d")
+        item["price_to_ma_ratio"] = ticker_data.get("price_to_ma_ratio")
 
     # Step 5: Log decisions into Google Cloud BigQuery
     print(f"\n5. Logging analysis results to BigQuery dataset '{dataset_id}'...")
     insert_sentiment(ranked_portfolio, dataset_id=dataset_id)
-    print("   Decisions written to 'infrastructure_sentiment' table.")
+    print("   Decisions written to 'infrastructure_market_metrics' table.")
 
     # Step 6: Print results summary
     print("\n=== Pipeline Execution Completed successfully ===")

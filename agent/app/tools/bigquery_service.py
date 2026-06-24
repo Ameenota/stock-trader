@@ -25,9 +25,9 @@ def get_bigquery_client() -> bigquery.Client:
 def setup_bigquery(dataset_id: str = "portfolio_analytics") -> None:
     """Checks if the dataset exists and creates it along with required tables if they do not exist.
 
-    Tables created:
-    - infrastructure_sentiment: stores sentiment analysis outputs and trade signals.
-    - trade_history: stores trade transaction receipts.
+    # Tables created:
+    # - infrastructure_market_metrics: stores sentiment analysis, momentum and analyst ratings.
+    # - trade_history: stores trade transaction receipts.
     """
     client = get_bigquery_client()
     project = client.project
@@ -42,8 +42,8 @@ def setup_bigquery(dataset_id: str = "portfolio_analytics") -> None:
         # Fallback or log if create_dataset fails
         pass
 
-    # 2. Define infrastructure_sentiment table schema
-    sentiment_table_id = f"{project}.{dataset_id}.infrastructure_sentiment"
+    # 2. Define infrastructure_market_metrics table schema
+    sentiment_table_id = f"{project}.{dataset_id}.infrastructure_market_metrics"
     sentiment_schema = [
         bigquery.SchemaField("ticker", "STRING", mode="REQUIRED"),
         bigquery.SchemaField("raw_score", "FLOAT", mode="REQUIRED"),
@@ -52,6 +52,11 @@ def setup_bigquery(dataset_id: str = "portfolio_analytics") -> None:
         bigquery.SchemaField("signal", "STRING", mode="REQUIRED"),
         bigquery.SchemaField("timestamp", "TIMESTAMP", mode="REQUIRED"),
         bigquery.SchemaField("raw_news", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("analyst_consensus", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("target_price", "FLOAT", mode="NULLABLE"),
+        bigquery.SchemaField("current_price", "FLOAT", mode="NULLABLE"),
+        bigquery.SchemaField("moving_average_20d", "FLOAT", mode="NULLABLE"),
+        bigquery.SchemaField("price_to_ma_ratio", "FLOAT", mode="NULLABLE"),
     ]
     sentiment_table = bigquery.Table(sentiment_table_id, schema=sentiment_schema)
     try:
@@ -88,17 +93,17 @@ def insert_sentiment(
     ranked_portfolio: List[Dict[str, Any]], 
     dataset_id: str = "portfolio_analytics"
 ) -> None:
-    """Inserts the ranked list from Phase 2 into the infrastructure_sentiment table.
+    """Inserts the ranked list from Phase 2 into the infrastructure_market_metrics table.
 
     Args:
-        ranked_portfolio: List of dictionaries containing ticker, raw_score, thesis, relative_rank, signal, and raw_news.
+        ranked_portfolio: List of dictionaries containing ticker, raw_score, thesis, relative_rank, signal, raw_news, and market metrics.
         dataset_id: The BigQuery dataset ID.
     """
     if not ranked_portfolio:
         return
 
     client = get_bigquery_client()
-    table_id = f"{client.project}.{dataset_id}.infrastructure_sentiment"
+    table_id = f"{client.project}.{dataset_id}.infrastructure_market_metrics"
     
     current_time_str = datetime.now(timezone.utc).isoformat()
     
@@ -109,6 +114,20 @@ def insert_sentiment(
             import json
             raw_news_val = json.dumps(raw_news_val)
 
+        # Cast to float/int if present to prevent any serialization type mismatch
+        target_price_val = item.get("target_price")
+        if target_price_val is not None:
+            target_price_val = float(target_price_val)
+        current_price_val = item.get("current_price")
+        if current_price_val is not None:
+            current_price_val = float(current_price_val)
+        ma_20_val = item.get("moving_average_20d")
+        if ma_20_val is not None:
+            ma_20_val = float(ma_20_val)
+        ratio_val = item.get("price_to_ma_ratio")
+        if ratio_val is not None:
+            ratio_val = float(ratio_val)
+
         rows_to_insert.append({
             "ticker": item["ticker"],
             "raw_score": float(item["raw_score"]),
@@ -116,7 +135,12 @@ def insert_sentiment(
             "relative_rank": int(item["relative_rank"]),
             "signal": item["signal"],
             "timestamp": item.get("timestamp") or current_time_str,
-            "raw_news": raw_news_val
+            "raw_news": raw_news_val,
+            "analyst_consensus": item.get("analyst_consensus"),
+            "target_price": target_price_val,
+            "current_price": current_price_val,
+            "moving_average_20d": ma_20_val,
+            "price_to_ma_ratio": ratio_val
         })
         
     errors = client.insert_rows_json(table_id, rows_to_insert)
@@ -141,11 +165,11 @@ def get_latest_signals(
         date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     client = get_bigquery_client()
-    table_id = f"{client.project}.{dataset_id}.infrastructure_sentiment"
+    table_id = f"{client.project}.{dataset_id}.infrastructure_market_metrics"
 
     # Query latest signals matching STRONG BUY or LIQUIDATE for the given date, ordered by timestamp desc
     query = f"""
-        SELECT ticker, raw_score, thesis, relative_rank, signal, timestamp
+        SELECT ticker, raw_score, thesis, relative_rank, signal, timestamp, analyst_consensus, target_price, current_price, moving_average_20d, price_to_ma_ratio
         FROM `{table_id}`
         WHERE DATE(timestamp) = @target_date
           AND signal IN ('STRONG BUY', 'LIQUIDATE')
@@ -169,7 +193,12 @@ def get_latest_signals(
             "thesis": row.thesis,
             "relative_rank": row.relative_rank,
             "signal": row.signal,
-            "timestamp": row.timestamp.isoformat() if hasattr(row.timestamp, "isoformat") else str(row.timestamp)
+            "timestamp": row.timestamp.isoformat() if hasattr(row.timestamp, "isoformat") else str(row.timestamp),
+            "analyst_consensus": getattr(row, "analyst_consensus", None),
+            "target_price": getattr(row, "target_price", None),
+            "current_price": getattr(row, "current_price", None),
+            "moving_average_20d": getattr(row, "moving_average_20d", None),
+            "price_to_ma_ratio": getattr(row, "price_to_ma_ratio", None)
         })
         
     return signals
