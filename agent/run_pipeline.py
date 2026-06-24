@@ -170,18 +170,9 @@ async def run_pipeline(dataset_id: str = "portfolio_analytics") -> None:
     session = await session_service.create_session(user_id="cron_job", app_name="trading")
     runner = Runner(agent=trading_agent, session_service=session_service, app_name="trading")
 
-    prompt_text = f"""(limit all queries or actions to the agentic account ending in 48661)
-Please perform today's trading execution and portfolio rebalancing.
+    prompt_text = f"""Please perform today's trading execution and portfolio rebalancing.
 Here is the historical metrics log for all 10 assets over the past week:
-{weekly_metrics}
-
-Please:
-1. Call Robinhood tools to inspect our current portfolio holdings and cash balance.
-2. Formulate your target portfolio (hold maximum of 3 assets, allocate total $100 budget dynamically based on metrics strength).
-3. Execute necessary buy/sell/liquidate orders via Robinhood MCP tools.
-4. For every action you take (BUY, SELL, or HOLD), record the transaction and reasoning using the insert_trade_record tool. For HOLD decisions, pass action="HOLD", amount_usd=0.0, and the reasoning description.
-5. Provide a summary of the trades executed and the reasoning.
-"""
+{weekly_metrics}"""
 
     message = types.Content(
         role="user",
