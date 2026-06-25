@@ -26,26 +26,12 @@ st.markdown("""
         font-family: 'Outfit', sans-serif;
     }
     
-    /* Minimize top spacing/padding added by Streamlit */
-    .block-container {
-        padding-top: 1.5rem !important;
-        padding-bottom: 1.5rem !important;
-    }
-    
-    /* Header removal/minimization */
-    header[data-testid="stHeader"] {
-        height: 0rem !important;
-        min-height: 0rem !important;
-        background: transparent !important;
-    }
-    
     /* Title adjustments */
     h1 {
         font-weight: 700 !important;
         background: linear-gradient(135deg, #2563eb 0%, #4f46e5 100%);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
-        margin-top: -1.5rem !important;
         margin-bottom: 2rem !important;
     }
     
