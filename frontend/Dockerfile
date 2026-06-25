@@ -19,6 +19,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the application code
 COPY app.py .
+COPY .streamlit/ .streamlit/
 
 # Streamlit looks for configurations or secrets in standard paths
 # Expose port 8080 (Cloud Run default target port)
