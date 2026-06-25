@@ -130,5 +130,5 @@ To complete your Kaggle Capstone Project submission, you must perform the follow
 
 ## 🔮 Future Improvements
 
-- [ ] **Dynamic Asset Screener**: Replace the hardcoded list of 10 AI stocks with an initial screening step where an agent dynamically finds the top trending tech/infrastructure stocks of the week.
+- [ ] **Reconciliation & Status Sync**: Query Robinhood orders via MCP post-execution to update local database logs with true execution status (filled vs. cancelled), actual filled share amounts, and final execution prices, rather than only displaying the submitted details.
 
