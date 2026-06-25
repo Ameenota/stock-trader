@@ -182,7 +182,7 @@ TICKER_DOMAINS = {
 def get_logo_html(ticker: str) -> str:
     domain = TICKER_DOMAINS.get(ticker.upper())
     if domain:
-        return f"<img src='https://logo.clearbit.com/{domain}' style='width: 16px; height: 16px; border-radius: 4px; margin-right: 6px; vertical-align: middle;' onerror='this.style.display=\"none\"' />"
+        return f"<img src='https://www.google.com/s2/favicons?domain={domain}&sz=32' style='width: 16px; height: 16px; border-radius: 4px; margin-right: 6px; vertical-align: middle;' onerror='this.style.display=\"none\"' />"
     return ""
 
 # 4. Main App Rendering
