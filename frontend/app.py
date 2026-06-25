@@ -185,6 +185,30 @@ def get_logo_html(ticker: str) -> str:
         return f"<img src='https://www.google.com/s2/favicons?domain={domain}&sz=32' style='width: 16px; height: 16px; border-radius: 4px; margin-right: 6px; vertical-align: middle;' onerror='this.style.display=\"none\"' />"
     return ""
 
+def format_thesis_html(text: str, max_chars: int = 90) -> str:
+    if not text:
+        return ""
+    if len(text) <= max_chars:
+        return f"<span style='font-size: 0.82rem; color: #475569; line-height: 1.45;'>{text}</span>"
+    
+    truncated = text[:max_chars]
+    last_space = truncated.rfind(" ")
+    if last_space > 40:
+        truncated = truncated[:last_space]
+        
+    return f"""
+    <details class="thesis-expander">
+        <summary style="list-style: none; outline: none; cursor: pointer;">
+            <span class="collapsed-text" style="font-size: 0.82rem; color: #475569; line-height: 1.45; white-space: normal;">
+                {truncated}... <span style="color: #2563eb; font-weight: 600; white-space: nowrap;">more ▾</span>
+            </span>
+            <span class="expanded-text" style="font-size: 0.82rem; color: #475569; line-height: 1.45; white-space: normal;">
+                {text} <span style="color: #2563eb; font-weight: 600; white-space: nowrap;">less ▴</span>
+            </span>
+        </summary>
+    </details>
+    """
+
 # 4. Main App Rendering
 st.title("Autonomous Stock Trader")
 st.markdown("<p style='font-size: 1.1rem; color: #475569; margin-top: -1.5rem; margin-bottom: 2rem;'><strong>Fully end-to-end:</strong> Ingests daily market news via yfinance, analyzes sentiment with Gemini, deterministically ranks conviction, and executes live orders via <strong>MCP with Agentic Robinhood using real $$$</strong>.</p>", unsafe_allow_html=True)
@@ -427,6 +451,25 @@ if not recs_df.empty:
             background-color: rgba(245, 158, 11, 0.15);
             color: #b45309;
         }
+        
+        /* Inline Thesis Expander Styles */
+        details.thesis-expander summary::-webkit-details-marker {
+            display: none !important;
+        }
+        details.thesis-expander summary {
+            list-style: none !important;
+            outline: none;
+            cursor: pointer;
+        }
+        details.thesis-expander .expanded-text {
+            display: none;
+        }
+        details.thesis-expander[open] .collapsed-text {
+            display: none;
+        }
+        details.thesis-expander[open] .expanded-text {
+            display: inline;
+        }
     </style>
     """, unsafe_allow_html=True)
 
@@ -473,7 +516,7 @@ if not recs_df.empty:
             <td><span class='signal-badge {badge_class}'>{sig}</span></td>
             <td>{price_str}</td>
             <td>{consensus}</td>
-            <td class='thesis-text'>{thesis}</td>
+            <td>{format_thesis_html(thesis)}</td>
         </tr>
         """
     html_code += "</tbody></table>"
@@ -576,7 +619,7 @@ if not trades_df.empty:
             <td><div style='display: flex; align-items: center;'>{logo_img}<a class='ticker-link' href='https://finance.yahoo.com/quote/{raw_ticker}' target='_blank'>{raw_ticker}</a></div></td>
             <td><span class='signal-badge {badge_class}'>{action}</span></td>
             <td>{amount_str}</td>
-            <td class='thesis-text'>{reasoning}</td>
+            <td>{format_thesis_html(reasoning)}</td>
         </tr>
                 """
             html_code_trades += "</tbody></table>"
