@@ -410,143 +410,143 @@ with m4:
 st.markdown("<hr/>", unsafe_allow_html=True)
 
 # 5. Latest Recommendations (Full Width Custom HTML Table)
-st.subheader("Daily AI Stock Recommendations")
-st.markdown("<p style='font-size: 0.85rem; color: #475569; margin-top: -0.8rem; margin-bottom: 1rem;'>We screen our 40-stock AI sector universe daily, filtering out stocks below their 50-day SMA and ranking the remainder by price momentum. The top 10 are fully analyzed by our sentiment agent using the latest 24h news to assign conviction scores (-1.0 to +1.0) and execution signals.</p>", unsafe_allow_html=True)
-if not recs_df.empty:
-    # Inject Custom Table CSS
-    st.markdown("""
-    <style>
-        .rec-table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 1rem;
-            font-size: 0.85rem;
-            color: #0f172a;
-        }
-        .rec-table th {
-            background-color: #f1f5f9;
-            border-bottom: 2px solid #e2e8f0;
-            padding: 10px;
-            text-align: left;
-            font-weight: 600;
-            color: #475569;
-        }
-        .rec-table td {
-            padding: 12px 10px;
-            border-bottom: 1px solid #e2e8f0;
-            vertical-align: top;
-        }
-        .rec-table tr:hover {
-            background-color: #f8fafc;
-        }
-        .ticker-link {
-            color: #2563eb;
-            text-decoration: none;
-            font-weight: 600;
-        }
-        .ticker-link:hover {
-            text-decoration: underline;
-        }
-        .thesis-text {
-            font-size: 0.78rem;
-            color: #475569;
-            line-height: 1.45;
-            white-space: normal;
-            word-break: break-word;
-        }
-        .signal-badge {
-            padding: 3px 8px;
-            border-radius: 4px;
-            font-size: 0.75rem;
-            font-weight: 600;
-            display: inline-block;
-        }
-        .signal-buy {
-            background-color: rgba(34, 197, 94, 0.15);
-            color: #15803d;
-        }
-        .signal-liquidate {
-            background-color: rgba(239, 68, 68, 0.15);
-            color: #b91c1c;
-        }
-        .signal-hold {
-            background-color: rgba(245, 158, 11, 0.15);
-            color: #b45309;
-        }
-        
-        /* Inline Thesis Expander Styles */
-        details.thesis-expander summary::-webkit-details-marker {
-            display: none !important;
-        }
-        details.thesis-expander summary {
-            list-style: none !important;
-            outline: none;
-            cursor: pointer;
-        }
-        details.thesis-expander .expanded-text {
-            display: none;
-        }
-        details.thesis-expander[open] .collapsed-text {
-            display: none;
-        }
-        details.thesis-expander[open] .expanded-text {
-            display: inline;
-        }
-    </style>
-    """, unsafe_allow_html=True)
-
-    # Construct HTML Table
-    html_code = """
-<table class='rec-table'>
-    <thead>
-        <tr>
-            <th style='width: 10%'>Ticker</th>
-            <th style='width: 12%'>Sentiment</th>
-            <th style='width: 8%'>Rank</th>
-            <th style='width: 14%'>Signal</th>
-            <th style='width: 12%'>Price</th>
-            <th style='width: 14%'>Consensus</th>
-            <th style='width: 30%'>Thesis</th>
-        </tr>
-    </thead>
-    <tbody>
-    """
-    for _, row in recs_df.iterrows():
-        ticker = row["ticker"]
-        score = float(row["raw_score"])
-        rank = int(row["relative_rank"])
-        sig = row["signal"]
-        price = row["current_price"]
-        price_str = f"${price:.2f}" if pd.notnull(price) else "N/A"
-        consensus = row["analyst_consensus"] or "N/A"
-        thesis = row["thesis"] or ""
-        
-        # Badge selection
-        if sig == "STRONG BUY":
-            badge_class = "signal-buy"
-        elif sig == "LIQUIDATE":
-            badge_class = "signal-liquidate"
-        else:
-            badge_class = "signal-hold"
+with st.expander("📈 Daily AI Stock Recommendations", expanded=True):
+    st.markdown("<p style='font-size: 0.85rem; color: #475569; margin-top: 0rem; margin-bottom: 1rem;'>We screen our 40-stock AI sector universe daily, filtering out stocks below their 50-day SMA and ranking the remainder by price momentum. The top 10 are fully analyzed by our sentiment agent using the latest 24h news to assign conviction scores (-1.0 to +1.0) and execution signals.</p>", unsafe_allow_html=True)
+    if not recs_df.empty:
+        # Inject Custom Table CSS
+        st.markdown("""
+        <style>
+            .rec-table {
+                width: 100%;
+                border-collapse: collapse;
+                margin-top: 1rem;
+                font-size: 0.85rem;
+                color: #0f172a;
+            }
+            .rec-table th {
+                background-color: #f1f5f9;
+                border-bottom: 2px solid #e2e8f0;
+                padding: 10px;
+                text-align: left;
+                font-weight: 600;
+                color: #475569;
+            }
+            .rec-table td {
+                padding: 12px 10px;
+                border-bottom: 1px solid #e2e8f0;
+                vertical-align: top;
+            }
+            .rec-table tr:hover {
+                background-color: #f8fafc;
+            }
+            .ticker-link {
+                color: #2563eb;
+                text-decoration: none;
+                font-weight: 600;
+            }
+            .ticker-link:hover {
+                text-decoration: underline;
+            }
+            .thesis-text {
+                font-size: 0.78rem;
+                color: #475569;
+                line-height: 1.45;
+                white-space: normal;
+                word-break: break-word;
+            }
+            .signal-badge {
+                padding: 3px 8px;
+                border-radius: 4px;
+                font-size: 0.75rem;
+                font-weight: 600;
+                display: inline-block;
+            }
+            .signal-buy {
+                background-color: rgba(34, 197, 94, 0.15);
+                color: #15803d;
+            }
+            .signal-liquidate {
+                background-color: rgba(239, 68, 68, 0.15);
+                color: #b91c1c;
+            }
+            .signal-hold {
+                background-color: rgba(245, 158, 11, 0.15);
+                color: #b45309;
+            }
             
-        logo_img = get_logo_html(ticker)
-        html_code += f"""
-        <tr>
-            <td><div style='display: flex; align-items: center;'>{logo_img}<a class='ticker-link' href='https://finance.yahoo.com/quote/{ticker}' target='_blank'>{ticker}</a></div></td>
-            <td>{score:+.2f}</td>
-            <td>{rank}</td>
-            <td><span class='signal-badge {badge_class}'>{sig}</span></td>
-            <td>{price_str}</td>
-            <td>{consensus}</td>
-            <td>{format_thesis_html(thesis)}</td>
-        </tr>
+            /* Inline Thesis Expander Styles */
+            details.thesis-expander summary::-webkit-details-marker {
+                display: none !important;
+            }
+            details.thesis-expander summary {
+                list-style: none !important;
+                outline: none;
+                cursor: pointer;
+            }
+            details.thesis-expander .expanded-text {
+                display: none;
+            }
+            details.thesis-expander[open] .collapsed-text {
+                display: none;
+            }
+            details.thesis-expander[open] .expanded-text {
+                display: inline;
+            }
+        </style>
+        """, unsafe_allow_html=True)
+
+        # Construct HTML Table
+        html_code = """
+    <table class='rec-table'>
+        <thead>
+            <tr>
+                <th style='width: 10%'>Ticker</th>
+                <th style='width: 12%'>Sentiment</th>
+                <th style='width: 8%'>Rank</th>
+                <th style='width: 14%'>Signal</th>
+                <th style='width: 12%'>Price</th>
+                <th style='width: 14%'>Consensus</th>
+                <th style='width: 30%'>Thesis</th>
+            </tr>
+        </thead>
+        <tbody>
         """
-    html_code += "</tbody></table>"
-    # Clean leading whitespace to prevent Markdown from interpreting indentation as preformatted blocks
-    cleaned_html = "\n".join([line.strip() for line in html_code.split("\n")])
-    st.markdown(cleaned_html, unsafe_allow_html=True)
-else:
-    st.info("No daily recommendations logged yet.")
+        for _, row in recs_df.iterrows():
+            ticker = row["ticker"]
+            score = float(row["raw_score"])
+            rank = int(row["relative_rank"])
+            sig = row["signal"]
+            price = row["current_price"]
+            price_str = f"${price:.2f}" if pd.notnull(price) else "N/A"
+            consensus = row["analyst_consensus"] or "N/A"
+            thesis = row["thesis"] or ""
+            
+            # Badge selection
+            if sig == "STRONG BUY":
+                badge_class = "signal-buy"
+            elif sig == "LIQUIDATE":
+                badge_class = "signal-liquidate"
+            else:
+                badge_class = "signal-hold"
+                
+            logo_img = get_logo_html(ticker)
+            html_code += f"""
+            <tr>
+                <td><div style='display: flex; align-items: center;'>{logo_img}<a class='ticker-link' href='https://finance.yahoo.com/quote/{ticker}' target='_blank'>{ticker}</a></div></td>
+                <td>{score:+.2f}</td>
+                <td>{rank}</td>
+                <td><span class='signal-badge {badge_class}'>{sig}</span></td>
+                <td>{price_str}</td>
+                <td>{consensus}</td>
+                <td>{format_thesis_html(thesis)}</td>
+            </tr>
+            """
+        html_code += "</tbody></table>"
+        # Clean leading whitespace to prevent Markdown from interpreting indentation as preformatted blocks
+        cleaned_html = "\n".join([line.strip() for line in html_code.split("\n")])
+        st.markdown(cleaned_html, unsafe_allow_html=True)
+    else:
+        st.info("No daily recommendations logged yet.")
 
 # Token-Saving Pre-Screener (The Graveyard) Section
 st.markdown("<div style='margin-top: 1.5rem;'></div>", unsafe_allow_html=True)
@@ -596,106 +596,106 @@ with st.expander("🛡️ Token-Saving Pre-Screener (The Graveyard) — Filtered
 st.markdown("<hr/>", unsafe_allow_html=True)
 
 # 6. Paginated & Filterable Trade History
-st.subheader("Executed Trade History Log")
-st.markdown("<p style='font-size: 0.85rem; color: #475569; margin-top: -0.8rem; margin-bottom: 1.2rem;'>This log displays live execution receipts performed by the trading agent on Robinhood via Model Context Protocol (MCP) tool calls, including detailed justifications logged directly from the agent's execution loop.</p>", unsafe_allow_html=True)
+with st.expander("💼 Executed Trade History Log", expanded=True):
+    st.markdown("<p style='font-size: 0.85rem; color: #475569; margin-top: 0rem; margin-bottom: 1.2rem;'>This log displays live execution receipts performed by the trading agent on Robinhood via Model Context Protocol (MCP) tool calls, including detailed justifications logged directly from the agent's execution loop.</p>", unsafe_allow_html=True)
 
-if not trades_df.empty:
-    # Checkbox to toggle simulated / dry-runs (default off)
-    show_simulated = st.checkbox("Show Simulated / Dry Run Trades", value=False)
-    
-    # Pre-process trades: Filter out HOLDs and normalize signal names to BUY / SELL
-    processed_df = trades_df.copy()
-    processed_df = processed_df[~processed_df["action"].isin(["HOLD"])]
-    
-    action_map = {
-        "STRONG BUY": "BUY",
-        "BUY": "BUY",
-        "SELL": "SELL",
-        "LIQUIDATE": "SELL"
-    }
-    processed_df["action"] = processed_df["action"].map(lambda a: action_map.get(a, a))
-    
-    # Filter out dry runs if checkbox is unchecked
-    if not show_simulated:
-        processed_df = processed_df[~processed_df["dry_run"]]
+    if not trades_df.empty:
+        # Checkbox to toggle simulated / dry-runs (default off)
+        show_simulated = st.checkbox("Show Simulated / Dry Run Trades", value=False)
         
-    if not processed_df.empty:
-        # Filter controls
-        col_search, col_action = st.columns([3, 1])
-        with col_search:
-            search_ticker = st.text_input("Filter by Ticker symbol:", "").strip().upper()
-        with col_action:
-            action_filter = st.selectbox("Filter by Action:", ["All", "BUY", "SELL"])
-            
-        filtered_df = processed_df.copy()
+        # Pre-process trades: Filter out HOLDs and normalize signal names to BUY / SELL
+        processed_df = trades_df.copy()
+        processed_df = processed_df[~processed_df["action"].isin(["HOLD"])]
         
-        # Apply search filter
-        if search_ticker:
-            filtered_df = filtered_df[filtered_df["ticker"].str.contains(search_ticker, case=False)]
+        action_map = {
+            "STRONG BUY": "BUY",
+            "BUY": "BUY",
+            "SELL": "SELL",
+            "LIQUIDATE": "SELL"
+        }
+        processed_df["action"] = processed_df["action"].map(lambda a: action_map.get(a, a))
+        
+        # Filter out dry runs if checkbox is unchecked
+        if not show_simulated:
+            processed_df = processed_df[~processed_df["dry_run"]]
             
-        # Apply action dropdown filter
-        if action_filter != "All":
-            filtered_df = filtered_df[filtered_df["action"] == action_filter]
+        if not processed_df.empty:
+            # Filter controls
+            col_search, col_action = st.columns([3, 1])
+            with col_search:
+                search_ticker = st.text_input("Filter by Ticker symbol:", "").strip().upper()
+            with col_action:
+                action_filter = st.selectbox("Filter by Action:", ["All", "BUY", "SELL"])
+                
+            filtered_df = processed_df.copy()
             
-        if not filtered_df.empty:
-            # Construct HTML Table for trades with styled badges and wrapping
-            html_code_trades = """
-<table class='rec-table'>
-    <thead>
-        <tr>
-            <th style='width: 20%'>Timestamp (UTC)</th>
-            <th style='width: 10%'>Ticker</th>
-            <th style='width: 12%'>Action</th>
-            <th style='width: 13%'>Amount</th>
-            <th style='width: 45%'>Reasoning / Trade Thesis</th>
-        </tr>
-    </thead>
-    <tbody>
-            """
-            for _, row in filtered_df.iterrows():
-                # Extract and format values
-                ts = pd.to_datetime(row["timestamp"]).strftime("%Y-%m-%d %H:%M:%S")
-                raw_ticker = row["ticker"]
-                action = row["action"]
-                amount_val = row["amount_usd"]
+            # Apply search filter
+            if search_ticker:
+                filtered_df = filtered_df[filtered_df["ticker"].str.contains(search_ticker, case=False)]
                 
-                if isinstance(amount_val, (int, float)):
-                    amount_str = f"${amount_val:.2f}"
-                else:
-                    amount_str = str(amount_val)
-                    if not amount_str.startswith("$"):
-                        try:
-                            amount_str = f"${float(amount_str):.2f}"
-                        except ValueError:
-                            pass
+            # Apply action dropdown filter
+            if action_filter != "All":
+                filtered_df = filtered_df[filtered_df["action"] == action_filter]
                 
-                reasoning = row["reasoning"] or ""
-                
-                # Badge selection
-                if action == "BUY":
-                    badge_class = "signal-buy"
-                elif action == "SELL":
-                    badge_class = "signal-liquidate"
-                else:
-                    badge_class = "signal-hold"
-                    
-                logo_img = get_logo_html(raw_ticker)
-                html_code_trades += f"""
-        <tr>
-            <td>{ts}</td>
-            <td><div style='display: flex; align-items: center;'>{logo_img}<a class='ticker-link' href='https://finance.yahoo.com/quote/{raw_ticker}' target='_blank'>{raw_ticker}</a></div></td>
-            <td><span class='signal-badge {badge_class}'>{action}</span></td>
-            <td>{amount_str}</td>
-            <td>{format_thesis_html(reasoning)}</td>
-        </tr>
+            if not filtered_df.empty:
+                # Construct HTML Table for trades with styled badges and wrapping
+                html_code_trades = """
+    <table class='rec-table'>
+        <thead>
+            <tr>
+                <th style='width: 20%'>Timestamp (UTC)</th>
+                <th style='width: 10%'>Ticker</th>
+                <th style='width: 12%'>Action</th>
+                <th style='width: 13%'>Amount</th>
+                <th style='width: 45%'>Reasoning / Trade Thesis</th>
+            </tr>
+        </thead>
+        <tbody>
                 """
-            html_code_trades += "</tbody></table>"
-            # Clean leading whitespace to prevent Markdown from interpreting indentation as preformatted blocks
-            cleaned_html_trades = "\n".join([line.strip() for line in html_code_trades.split("\n")])
-            st.markdown(cleaned_html_trades, unsafe_allow_html=True)
+                for _, row in filtered_df.iterrows():
+                    # Extract and format values
+                    ts = pd.to_datetime(row["timestamp"]).strftime("%Y-%m-%d %H:%M:%S")
+                    raw_ticker = row["ticker"]
+                    action = row["action"]
+                    amount_val = row["amount_usd"]
+                    
+                    if isinstance(amount_val, (int, float)):
+                        amount_str = f"${amount_val:.2f}"
+                    else:
+                        amount_str = str(amount_val)
+                        if not amount_str.startswith("$"):
+                            try:
+                                amount_str = f"${float(amount_str):.2f}"
+                            except ValueError:
+                                pass
+                    
+                    reasoning = row["reasoning"] or ""
+                    
+                    # Badge selection
+                    if action == "BUY":
+                        badge_class = "signal-buy"
+                    elif action == "SELL":
+                        badge_class = "signal-liquidate"
+                    else:
+                        badge_class = "signal-hold"
+                        
+                    logo_img = get_logo_html(raw_ticker)
+                    html_code_trades += f"""
+            <tr>
+                <td>{ts}</td>
+                <td><div style='display: flex; align-items: center;'>{logo_img}<a class='ticker-link' href='https://finance.yahoo.com/quote/{raw_ticker}' target='_blank'>{raw_ticker}</a></div></td>
+                <td><span class='signal-badge {badge_class}'>{action}</span></td>
+                <td>{amount_str}</td>
+                <td>{format_thesis_html(reasoning)}</td>
+            </tr>
+                    """
+                html_code_trades += "</tbody></table>"
+                # Clean leading whitespace to prevent Markdown from interpreting indentation as preformatted blocks
+                cleaned_html_trades = "\n".join([line.strip() for line in html_code_trades.split("\n")])
+                st.markdown(cleaned_html_trades, unsafe_allow_html=True)
+            else:
+                st.info("No executed trades match the search filters.")
         else:
-            st.info("No executed trades match the search filters.")
+            st.info("No live executed trades logged yet. (Check 'Show Simulated / Dry Run Trades' to view simulated execution logs).")
     else:
-        st.info("No live executed trades logged yet. (Check 'Show Simulated / Dry Run Trades' to view simulated execution logs).")
-else:
-    st.info("No executed trades logged in the database yet.")
+        st.info("No executed trades logged in the database yet.")
