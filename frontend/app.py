@@ -144,6 +144,46 @@ snap = load_latest_snapshot()
 recs_df = load_latest_recommendations()
 trades_df = load_trade_history()
 
+# Calculate average sentiment and render gauge chart
+if not recs_df.empty:
+    avg_sentiment = float(recs_df["raw_score"].mean())
+else:
+    avg_sentiment = 0.0
+
+import plotly.graph_objects as go
+fig_gauge = go.Figure(go.Indicator(
+    mode="gauge+number",
+    value=avg_sentiment,
+    domain={'x': [0, 1], 'y': [0, 1]},
+    title={'text': "Market Sentiment (Agent Mood)", 'font': {'size': 18, 'color': 'white'}},
+    gauge={
+        'axis': {'range': [-1.0, 1.0], 'tickwidth': 1, 'tickcolor': "white"},
+        'bar': {'color': "#6C5DD3"},
+        'bgcolor': "rgba(0,0,0,0)",
+        'borderwidth': 2,
+        'bordercolor': "#2e2e38",
+        'steps': [
+            {'range': [-1.0, -0.2], 'color': "rgba(255, 76, 97, 0.3)"},
+            {'range': [-0.2, 0.2], 'color': "rgba(255, 162, 107, 0.3)"},
+            {'range': [0.2, 1.0], 'color': "rgba(0, 198, 137, 0.3)"}
+        ],
+        'threshold': {
+            'line': {'color': "white", 'width': 4},
+            'thickness': 0.75,
+            'value': avg_sentiment
+        }
+    }
+))
+
+fig_gauge.update_layout(
+    paper_bgcolor='rgba(0,0,0,0)',
+    plot_bgcolor='rgba(0,0,0,0)',
+    font={'color': "white"},
+    height=200,
+    margin=dict(l=20, r=20, t=50, b=20)
+)
+st.plotly_chart(fig_gauge, use_container_width=True)
+
 # Header details
 col_left, col_right = st.columns(2)
 with col_left:
