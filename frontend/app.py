@@ -150,13 +150,14 @@ if not recs_df.empty:
 else:
     avg_sentiment = 0.0
 
+st.markdown("<div style='text-align: center; font-size: 1.1rem; font-weight: 600; color: white; margin-top: -0.5rem; margin-bottom: -1rem;'>Market Sentiment (Agent Mood)</div>", unsafe_allow_html=True)
+
 import plotly.graph_objects as go
 fig_gauge = go.Figure(go.Indicator(
     mode="gauge+number",
     value=avg_sentiment,
     number={'font': {'size': 32, 'family': 'Outfit, sans-serif'}, 'valueformat': '.3f'},
     domain={'x': [0.25, 0.75], 'y': [0, 1]},
-    title={'text': "Market Sentiment (Agent Mood)", 'font': {'size': 15, 'color': 'white', 'family': 'Outfit, sans-serif'}},
     gauge={
         'axis': {'range': [-1.0, 1.0], 'tickwidth': 1, 'tickcolor': "white"},
         'bar': {'color': "rgba(0,0,0,0)"},  # Transparent to let the pure steps colors pop
@@ -179,8 +180,8 @@ fig_gauge.update_layout(
     paper_bgcolor='rgba(0,0,0,0)',
     plot_bgcolor='rgba(0,0,0,0)',
     font={'color': "white", 'family': "Outfit, sans-serif"},
-    height=140,
-    margin=dict(l=10, r=10, t=35, b=10)
+    height=120,
+    margin=dict(l=10, r=10, t=10, b=10)
 )
 st.plotly_chart(fig_gauge, use_container_width=True)
 
