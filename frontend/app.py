@@ -218,7 +218,7 @@ st.markdown("<hr/>", unsafe_allow_html=True)
 
 # 5. Latest Recommendations (Full Width Custom HTML Table)
 st.subheader("Daily AI Stock Recommendations")
-st.markdown("<p style='font-size: 0.85rem; color: #a0a0b0; margin-top: -0.8rem; margin-bottom: 1rem;'><strong>How it works:</strong> We screen our 40-stock AI sector universe daily, filtering out stocks below their 50-day SMA and ranking the remainder by price momentum. The top 10 are fully analyzed by our sentiment agent using the latest 24h news to assign conviction scores (-1.0 to +1.0) and execution signals.</p>", unsafe_allow_html=True)
+st.markdown("<p style='font-size: 0.85rem; color: #a0a0b0; margin-top: -0.8rem; margin-bottom: 1rem;'>We screen our 40-stock AI sector universe daily, filtering out stocks below their 50-day SMA and ranking the remainder by price momentum. The top 10 are fully analyzed by our sentiment agent using the latest 24h news to assign conviction scores (-1.0 to +1.0) and execution signals.</p>", unsafe_allow_html=True)
 if not recs_df.empty:
     # Inject Custom Table CSS
     st.markdown("""
@@ -339,7 +339,7 @@ st.markdown("<hr/>", unsafe_allow_html=True)
 
 # 6. Paginated & Filterable Trade History
 st.subheader("Executed Trade History Log")
-st.markdown("<p style='font-size: 0.85rem; color: #a0a0b0; margin-top: -0.8rem; margin-bottom: 1.2rem;'><strong>How it works:</strong> This log displays live execution receipts performed by the trading agent on Robinhood via Model Context Protocol (MCP) tool calls, including detailed justifications logged directly from the agent's execution loop.</p>", unsafe_allow_html=True)
+st.markdown("<p style='font-size: 0.85rem; color: #a0a0b0; margin-top: -0.8rem; margin-bottom: 1.2rem;'>This log displays live execution receipts performed by the trading agent on Robinhood via Model Context Protocol (MCP) tool calls, including detailed justifications logged directly from the agent's execution loop.</p>", unsafe_allow_html=True)
 
 if not trades_df.empty:
     # Checkbox to toggle simulated / dry-runs (default off)
