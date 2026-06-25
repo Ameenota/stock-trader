@@ -158,18 +158,17 @@ fig_gauge = go.Figure(go.Indicator(
     title={'text': "Market Sentiment (Agent Mood)", 'font': {'size': 18, 'color': 'white'}},
     gauge={
         'axis': {'range': [-1.0, 1.0], 'tickwidth': 1, 'tickcolor': "white"},
-        'bar': {'color': "#6C5DD3"},
+        'bar': {'color': "rgba(0,0,0,0)"},  # Transparent to let the pure steps colors pop
         'bgcolor': "rgba(0,0,0,0)",
-        'borderwidth': 2,
-        'bordercolor': "#2e2e38",
+        'borderwidth': 0,
         'steps': [
-            {'range': [-1.0, -0.2], 'color': "rgba(255, 76, 97, 0.3)"},
-            {'range': [-0.2, 0.2], 'color': "rgba(255, 162, 107, 0.3)"},
-            {'range': [0.2, 1.0], 'color': "rgba(0, 198, 137, 0.3)"}
+            {'range': [-1.0, -0.2], 'color': "#FF3B30"},  # Apple Vibrant Red
+            {'range': [-0.2, 0.2], 'color': "#FFCC00"},   # Apple Vibrant Yellow
+            {'range': [0.2, 1.0], 'color': "#34C759"}    # Apple Vibrant Green
         ],
         'threshold': {
             'line': {'color': "white", 'width': 4},
-            'thickness': 0.75,
+            'thickness': 0.8,
             'value': avg_sentiment
         }
     }
