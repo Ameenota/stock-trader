@@ -112,6 +112,7 @@ def load_latest_recommendations() -> pd.DataFrame:
             FROM `{project}.{dataset_id}.infrastructure_market_metrics`
         )
         AND timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
+        AND signal != 'FILTERED'
         ORDER BY relative_rank DESC
     """
     try:
@@ -119,6 +120,26 @@ def load_latest_recommendations() -> pd.DataFrame:
         return df
     except Exception as e:
         st.error(f"Error loading recommendations: {e}")
+        return pd.DataFrame()
+
+def load_latest_graveyard() -> pd.DataFrame:
+    """Loads the pre-screener failed assets from the absolute latest batch run within the last 24 hours."""
+    query = f"""
+        SELECT ticker, current_price, moving_average_20d as sma_50, price_to_ma_ratio as momentum, thesis, timestamp
+        FROM `{project}.{dataset_id}.infrastructure_market_metrics`
+        WHERE timestamp = (
+            SELECT MAX(timestamp) 
+            FROM `{project}.{dataset_id}.infrastructure_market_metrics`
+        )
+        AND timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
+        AND signal = 'FILTERED'
+        ORDER BY ticker ASC
+    """
+    try:
+        df = client.query(query).to_dataframe()
+        return df
+    except Exception as e:
+        st.error(f"Error loading graveyard: {e}")
         return pd.DataFrame()
 
 def load_trade_history() -> pd.DataFrame:
@@ -216,6 +237,7 @@ st.markdown("<p style='font-size: 1.1rem; color: #475569; margin-top: -1.5rem; m
 # Load data
 snap = load_latest_snapshot()
 recs_df = load_latest_recommendations()
+graveyard_df = load_latest_graveyard()
 trades_df = load_trade_history()
 
 # Calculate average sentiment and render gauge chart
@@ -525,6 +547,51 @@ if not recs_df.empty:
     st.markdown(cleaned_html, unsafe_allow_html=True)
 else:
     st.info("No daily recommendations logged yet.")
+
+# Token-Saving Pre-Screener (The Graveyard) Section
+st.markdown("<div style='margin-top: 1.5rem;'></div>", unsafe_allow_html=True)
+with st.expander("🛡️ Token-Saving Pre-Screener (The Graveyard) — Filtered Assets", expanded=False):
+    st.markdown("<p style='font-size: 0.85rem; color: #475569; margin-top: 0rem; margin-bottom: 1.2rem;'>To minimize LLM inference costs and optimize execution speed, the pre-screener automatically filters out assets that have weak technical setups (e.g. trading below their 50-day SMA or falling outside the top momentum ranks). These assets completely skip news ingestion and Gemini sentiment analysis, <strong>saving 100% of LLM token costs</strong> for these stocks today.</p>", unsafe_allow_html=True)
+    if not graveyard_df.empty:
+        html_code_gy = """
+<table class='rec-table'>
+    <thead>
+        <tr>
+            <th style='width: 15%'>Ticker</th>
+            <th style='width: 15%'>Price</th>
+            <th style='width: 15%'>50-Day SMA</th>
+            <th style='width: 15%'>Price / SMA Ratio</th>
+            <th style='width: 40%'>Pre-Screener Filter Reason</th>
+        </tr>
+    </thead>
+    <tbody>
+        """
+        for _, row in graveyard_df.iterrows():
+            ticker = row["ticker"]
+            price = row["current_price"]
+            price_str = f"${price:.2f}" if pd.notnull(price) else "N/A"
+            sma = row["sma_50"]
+            sma_str = f"${sma:.2f}" if pd.notnull(sma) else "N/A"
+            mom = row["momentum"]
+            mom_str = f"{mom:.3f}" if pd.notnull(mom) else "N/A"
+            reason = row["thesis"] or ""
+            
+            logo_img = get_logo_html(ticker)
+            
+            html_code_gy += f"""
+        <tr>
+            <td><div style='display: flex; align-items: center;'>{logo_img}<a class='ticker-link' href='https://finance.yahoo.com/quote/{ticker}' target='_blank'>{ticker}</a></div></td>
+            <td>{price_str}</td>
+            <td>{sma_str}</td>
+            <td>{mom_str}</td>
+            <td><span style='color: #64748b; font-style: italic;'>{reason}</span></td>
+        </tr>
+            """
+        html_code_gy += "</tbody></table>"
+        cleaned_html_gy = "\n".join([line.strip() for line in html_code_gy.split("\n")])
+        st.markdown(cleaned_html_gy, unsafe_allow_html=True)
+    else:
+        st.info("No pre-screener graveyard logs found for today.")
 
 st.markdown("<hr/>", unsafe_allow_html=True)
 

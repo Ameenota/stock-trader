@@ -358,6 +358,7 @@ def get_historical_metrics(
         SELECT ticker, raw_score, thesis, relative_rank, signal, timestamp, analyst_consensus, target_price, current_price, moving_average_20d, price_to_ma_ratio, rsi, macd, macd_signal
         FROM `{table_id}`
         WHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @days DAY)
+          AND signal != 'FILTERED'
         ORDER BY ticker, timestamp ASC
     """
     

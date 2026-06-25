@@ -212,13 +212,14 @@ async def run_daily_analysis_pipeline(dataset_id: str = "portfolio_analytics") -
     """Ingests market news/metrics, runs sentiment analysis agent, ranks assets,
     and logs decisions to BigQuery.
     """
+    from datetime import datetime, timezone
     from app.tools.data_ingestion import ingest_market_data
     from app.tools.ranking import process_sentiment_rankings
     from app.tools.bigquery_service import insert_sentiment
     from app.tools.ticker_universe import determine_active_watchlist
 
-    # 1. Dynamically determine the watchlist
-    active_tickers = await determine_active_watchlist(dataset_id=dataset_id)
+    # 1. Dynamically determine the watchlist and get details for all universe assets
+    active_tickers, all_tickers_details = await determine_active_watchlist(dataset_id=dataset_id, return_details=True)
 
     # 2. Ingest latest market news and metrics only for the active watchlist
     market_data = ingest_market_data(tickers=active_tickers)
@@ -251,8 +252,10 @@ async def run_daily_analysis_pipeline(dataset_id: str = "portfolio_analytics") -
     ranked_portfolio = process_sentiment_rankings(sentiment_result)
 
     # 4. Attach raw news and technical metrics for auditing
+    current_time_str = datetime.now(timezone.utc).isoformat()
     for item in ranked_portfolio:
         ticker = item["ticker"]
+        item["timestamp"] = current_time_str
         ticker_data = market_data.get(ticker, {})
         item["raw_news"] = ticker_data.get("news", [])
         item["analyst_consensus"] = ticker_data.get("analyst_consensus")
@@ -264,8 +267,31 @@ async def run_daily_analysis_pipeline(dataset_id: str = "portfolio_analytics") -
         item["macd"] = ticker_data.get("macd")
         item["macd_signal"] = ticker_data.get("macd_signal")
 
-    # 5. Log decisions to BigQuery
-    insert_sentiment(ranked_portfolio, dataset_id=dataset_id)
+    # 5. Build placeholder rows for the filtered graveyard assets to prove LLM token savings
+    graveyard_rows = []
+    for ticker, detail in all_tickers_details.items():
+        if detail.get("status") == "FILTERED":
+            graveyard_rows.append({
+                "ticker": ticker,
+                "raw_score": 0.0,
+                "thesis": f"Filtered: {detail.get('reason', 'Excluded by pre-screener')}",
+                "relative_rank": 0,
+                "signal": "FILTERED",
+                "timestamp": current_time_str,
+                "raw_news": "[]",
+                "analyst_consensus": "N/A",
+                "target_price": None,
+                "current_price": detail.get("current_price"),
+                "moving_average_20d": detail.get("sma_50"),
+                "price_to_ma_ratio": detail.get("momentum"),
+                "rsi": None,
+                "macd": None,
+                "macd_signal": None
+            })
+
+    # 6. Log all decisions (10 active + 30 graveyard) to BigQuery
+    all_rows_to_log = list(ranked_portfolio) + graveyard_rows
+    insert_sentiment(all_rows_to_log, dataset_id=dataset_id)
 
     return ranked_portfolio
 

@@ -69,7 +69,7 @@ def get_active_tickers() -> List[str]:
     return ACTIVE_TICKERS
 
 
-async def determine_active_watchlist(dataset_id: str = "portfolio_analytics") -> List[str]:
+async def determine_active_watchlist(dataset_id: str = "portfolio_analytics", return_details: bool = False) -> List[str] | tuple:
     """Dynamically screens the 40-stock TICKER_UNIVERSE to build a refined 10-stock active watchlist.
 
     Logic:
@@ -146,5 +146,47 @@ async def determine_active_watchlist(dataset_id: str = "portfolio_analytics") ->
         if t not in watchlist_set and len(final_watchlist) < 10:
             watchlist_set.add(t)
             final_watchlist.append(t)
+
+    # 8. Build detailed pre-screener status log if requested
+    if return_details:
+        all_details = {}
+        results_lookup = {r["ticker"]: r for r in results if r is not None}
+        final_watchlist_set = set(final_watchlist)
+        
+        for t in TICKER_UNIVERSE:
+            detail = {
+                "ticker": t,
+                "current_price": None,
+                "sma_50": None,
+                "momentum": None,
+            }
+            if t in results_lookup:
+                detail["current_price"] = results_lookup[t]["current_price"]
+                detail["sma_50"] = results_lookup[t]["sma_50"]
+                detail["momentum"] = results_lookup[t]["momentum"]
+                
+            if t in final_watchlist_set:
+                detail["status"] = "SELECTED"
+                if t in owned_tickers:
+                    detail["reason"] = "Owned position promotion"
+                elif t in top_candidate_tickers:
+                    detail["reason"] = "Top momentum rank"
+                else:
+                    detail["reason"] = "Watchlist padding fallback"
+            else:
+                detail["status"] = "FILTERED"
+                if t in owned_tickers:
+                    detail["reason"] = "Owned but excluded"
+                elif t in results_lookup:
+                    r = results_lookup[t]
+                    if r["current_price"] <= r["sma_50"]:
+                        detail["reason"] = "Below 50-day SMA"
+                    else:
+                        detail["reason"] = "Low momentum rank"
+                else:
+                    detail["reason"] = "Data unavailable (yfinance)"
+            all_details[t] = detail
+            
+        return final_watchlist, all_details
 
     return final_watchlist
