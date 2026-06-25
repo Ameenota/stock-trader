@@ -153,8 +153,8 @@ with col_right:
     local_time = snap['timestamp'].strftime("%Y-%m-%d %H:%M:%S UTC")
     st.markdown(f"<div style='text-align: right; color: gray;'>Last Snapshot: {local_time}</div>", unsafe_allow_html=True)
 
-# Metrics Panel
-m1, m2, m3 = st.columns(3)
+# Metrics & Allocation Panel
+m1, m2, m3, m4 = st.columns([1, 1, 1, 1.2])
 with m1:
     st.metric(
         label="Net Portfolio Value",
@@ -175,16 +175,8 @@ with m3:
         delta=f"{gain_loss_prefix}${gain_loss:.2f} total",
         delta_color="normal" if gain_loss >= 0 else "inverse"
     )
-
-st.markdown("<hr/>", unsafe_allow_html=True)
-
-# 5. Asset Allocation & Latest Recommendations
-col_charts, col_recs = st.columns([2, 3])
-
-with col_charts:
-    st.subheader("Portfolio Allocation")
+with m4:
     holdings_list = snap["holdings"]
-    
     if not holdings_list:
         # 100% Cash allocation
         allocation_df = pd.DataFrame([{"Asset": "Cash", "Value (USD)": snap["total_cash"]}])
@@ -203,45 +195,50 @@ with col_charts:
         color_discrete_sequence=["#6C5DD3", "#3F8CFF", "#00C689", "#FFA26B", "#FF4C61", "#D3D3D3"]
     )
     fig.update_layout(
-        margin=dict(l=0, r=0, t=10, b=0),
-        legend=dict(orientation="h", yanchor="bottom", y=-0.1, xanchor="center", x=0.5),
+        margin=dict(l=10, r=10, t=10, b=10),
+        height=130,
+        showlegend=False,
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)',
         font_color="white"
     )
-    st.plotly_chart(fig, use_container_width=True)
+    with st.container(border=True):
+        st.markdown("<div style='text-align: center; font-size: 0.75rem; font-weight: 600; color: gray; margin-bottom: -1rem; margin-top: -0.4rem;'>PORTFOLIO ALLOCATION</div>", unsafe_allow_html=True)
+        st.plotly_chart(fig, use_container_width=True)
 
-with col_recs:
-    st.subheader("Daily AI Stock Recommendations")
-    if not recs_df.empty:
-        # Select key columns for display
-        disp_df = recs_df[[
-            "ticker", "raw_score", "relative_rank", "signal", 
-            "current_price", "analyst_consensus", "thesis"
-        ]].copy()
-        
-        # Format columns
-        disp_df["ticker"] = disp_df["ticker"].apply(lambda t: f"https://finance.yahoo.com/quote/{t}")
-        disp_df["raw_score"] = disp_df["raw_score"].map(lambda x: f"{x:.2f}")
-        disp_df["current_price"] = disp_df["current_price"].map(lambda x: f"${x:.2f}" if pd.notnull(x) else "N/A")
-        disp_df.columns = ["Ticker", "Sentiment Score", "Rank", "Signal", "Price", "Consensus", "Thesis"]
-        
-        st.dataframe(
-            disp_df,
-            hide_index=True,
-            use_container_width=True,
-            column_config={
-                "Ticker": st.column_config.LinkColumn("Ticker", display_text=r"https://finance\.yahoo\.com/quote/(.*)", width="small"),
-                "Sentiment Score": st.column_config.TextColumn(width="small"),
-                "Rank": st.column_config.NumberColumn(width="small"),
-                "Signal": st.column_config.TextColumn(width="small"),
-                "Price": st.column_config.TextColumn(width="small"),
-                "Consensus": st.column_config.TextColumn(width="small"),
-                "Thesis": st.column_config.TextColumn(width="large")
-            }
-        )
-    else:
-        st.info("No daily recommendations logged yet.")
+st.markdown("<hr/>", unsafe_allow_html=True)
+
+# 5. Latest Recommendations (Full Width)
+st.subheader("Daily AI Stock Recommendations")
+if not recs_df.empty:
+    # Select key columns for display
+    disp_df = recs_df[[
+        "ticker", "raw_score", "relative_rank", "signal", 
+        "current_price", "analyst_consensus", "thesis"
+    ]].copy()
+    
+    # Format columns
+    disp_df["ticker"] = disp_df["ticker"].apply(lambda t: f"https://finance.yahoo.com/quote/{t}")
+    disp_df["raw_score"] = disp_df["raw_score"].map(lambda x: f"{x:.2f}")
+    disp_df["current_price"] = disp_df["current_price"].map(lambda x: f"${x:.2f}" if pd.notnull(x) else "N/A")
+    disp_df.columns = ["Ticker", "Sentiment Score", "Rank", "Signal", "Price", "Consensus", "Thesis"]
+    
+    st.dataframe(
+        disp_df,
+        hide_index=True,
+        use_container_width=True,
+        column_config={
+            "Ticker": st.column_config.LinkColumn("Ticker", display_text=r"https://finance\.yahoo\.com/quote/(.*)", width="small"),
+            "Sentiment Score": st.column_config.TextColumn(width="small"),
+            "Rank": st.column_config.NumberColumn(width="small"),
+            "Signal": st.column_config.TextColumn(width="small"),
+            "Price": st.column_config.TextColumn(width="small"),
+            "Consensus": st.column_config.TextColumn(width="small"),
+            "Thesis": st.column_config.TextColumn(width="large")
+        }
+    )
+else:
+    st.info("No daily recommendations logged yet.")
 
 st.markdown("<hr/>", unsafe_allow_html=True)
 
