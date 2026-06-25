@@ -142,6 +142,38 @@ def load_latest_graveyard() -> pd.DataFrame:
         st.error(f"Error loading graveyard: {e}")
         return pd.DataFrame()
 
+def load_latest_news_headlines() -> list:
+    """Loads the raw news headlines from the absolute latest batch run within the last 24 hours."""
+    query = f"""
+        SELECT raw_news
+        FROM `{project}.{dataset_id}.infrastructure_market_metrics`
+        WHERE timestamp = (
+            SELECT MAX(timestamp) 
+            FROM `{project}.{dataset_id}.infrastructure_market_metrics`
+        )
+        AND timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
+        AND signal != 'FILTERED'
+        AND raw_news IS NOT NULL
+    """
+    try:
+        query_job = client.query(query)
+        headlines = []
+        for row in query_job.result():
+            if row.raw_news:
+                try:
+                    news_list = json.loads(row.raw_news)
+                    if isinstance(news_list, list):
+                        for news in news_list:
+                            title = news.get("title")
+                            if title:
+                                headlines.append(title.strip())
+                except Exception:
+                    pass
+        return headlines
+    except Exception as e:
+        st.error(f"Error loading news headlines: {e}")
+        return []
+
 def load_trade_history() -> pd.DataFrame:
     """Loads the entire execution trade history log."""
     query = f"""
@@ -239,6 +271,7 @@ snap = load_latest_snapshot()
 recs_df = load_latest_recommendations()
 graveyard_df = load_latest_graveyard()
 trades_df = load_trade_history()
+headlines = load_latest_news_headlines()
 
 # Calculate average sentiment and render gauge chart
 if not recs_df.empty:
@@ -408,6 +441,20 @@ with m4:
     st.markdown(cleaned_html, unsafe_allow_html=True)
 
 st.markdown("<hr/>", unsafe_allow_html=True)
+
+# Bloomberg Style Marquee Ticker Tape
+if headlines:
+    ticker_text = " | ".join(headlines)
+    st.markdown(
+        f"""
+        <div style="background-color: #0f172a; border-radius: 6px; padding: 6px 12px; margin-top: -1.5rem; margin-bottom: 1.5rem; border: 1px solid #1e293b; overflow: hidden; white-space: nowrap;">
+            <marquee style="font-family: 'Courier New', Courier, monospace; color: #34d399; font-weight: 600; font-size: 0.85rem;" scrollamount="6">
+                🔥 LATEST MARKET NEWS INGESTED BY SENTIMENT AGENT: &nbsp;&nbsp;&nbsp;&nbsp; {ticker_text}
+            </marquee>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
 # 5. Latest Recommendations (Full Width Custom HTML Table)
 with st.expander("📈 Daily AI Stock Recommendations", expanded=True):
