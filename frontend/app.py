@@ -149,9 +149,18 @@ col_left, col_right = st.columns(2)
 with col_left:
     st.caption(f"Account Managed: **{snap['account_number']}**")
 with col_right:
-    # Format localized time
-    local_time = snap['timestamp'].strftime("%Y-%m-%d %H:%M:%S UTC")
-    st.markdown(f"<div style='text-align: right; color: gray;'>Last Snapshot: {local_time}</div>", unsafe_allow_html=True)
+    # Format localized time as relative "X time ago"
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    diff = now - snap['timestamp']
+    diff_hours = diff.total_seconds() / 3600.0
+    if diff_hours < 1.0:
+        diff_mins = diff.total_seconds() / 60.0
+        time_ago = f"{int(diff_mins)} minutes ago" if diff_mins >= 1 else "just now"
+    else:
+        time_ago = f"{int(diff_hours)} hours ago" if int(diff_hours) > 1 else "1 hour ago"
+        
+    st.markdown(f"<div style='text-align: right; color: gray; font-size: 0.82rem; font-style: italic;'>Last Snapshot: {time_ago}</div>", unsafe_allow_html=True)
 
 # Metrics & Allocation Panel
 m1, m2, m3, m4 = st.columns([1, 1, 1, 1.2])
@@ -209,6 +218,7 @@ st.markdown("<hr/>", unsafe_allow_html=True)
 
 # 5. Latest Recommendations (Full Width Custom HTML Table)
 st.subheader("Daily AI Stock Recommendations")
+st.markdown("<p style='font-size: 0.85rem; color: #a0a0b0; margin-top: -0.8rem; margin-bottom: 1rem;'><strong>How it works:</strong> We screen our 40-stock AI sector universe daily, filtering out stocks below their 50-day SMA and ranking the remainder by price momentum. The top 10 are fully analyzed by our sentiment agent using the latest 24h news to assign conviction scores (-1.0 to +1.0) and execution signals.</p>", unsafe_allow_html=True)
 if not recs_df.empty:
     # Inject Custom Table CSS
     st.markdown("""
@@ -329,6 +339,8 @@ st.markdown("<hr/>", unsafe_allow_html=True)
 
 # 6. Paginated & Filterable Trade History
 st.subheader("Executed Trade History Log")
+st.markdown("<p style='font-size: 0.85rem; color: #a0a0b0; margin-top: -0.8rem; margin-bottom: 1.2rem;'><strong>How it works:</strong> This log displays live execution receipts performed by the trading agent on Robinhood via Model Context Protocol (MCP) tool calls, including detailed justifications logged directly from the agent's execution loop.</p>", unsafe_allow_html=True)
+
 if not trades_df.empty:
     # Checkbox to toggle simulated / dry-runs (default off)
     show_simulated = st.checkbox("Show Simulated / Dry Run Trades", value=False)
@@ -368,29 +380,60 @@ if not trades_df.empty:
             filtered_df = filtered_df[filtered_df["action"] == action_filter]
             
         if not filtered_df.empty:
-            # Format and present trade table
-            filtered_df["amount_usd"] = filtered_df["amount_usd"].map(lambda x: f"${x:.2f}")
-            # Convert timestamp to human-readable datetime string
-            filtered_df["timestamp"] = pd.to_datetime(filtered_df["timestamp"]).dt.strftime("%Y-%m-%d %H:%M:%S")
-            
-            # Select columns to display (hide dry_run column)
-            disp_df = filtered_df[["timestamp", "ticker", "action", "amount_usd", "reasoning"]].copy()
-            disp_df["ticker"] = disp_df["ticker"].apply(lambda t: f"https://finance.yahoo.com/quote/{t}")
-            disp_df.columns = ["Timestamp (UTC)", "Ticker", "Action", "Amount", "Reasoning / Trade Thesis"]
-            
-            # Paginate by showing standard Streamlit scrollable dataframe
-            st.dataframe(
-                disp_df,
-                hide_index=True,
-                use_container_width=True,
-                column_config={
-                    "Timestamp (UTC)": st.column_config.TextColumn(width="medium"),
-                    "Ticker": st.column_config.LinkColumn("Ticker", display_text=r"https://finance\.yahoo\.com/quote/(.*)", width="small"),
-                    "Action": st.column_config.TextColumn(width="small"),
-                    "Amount": st.column_config.TextColumn(width="small"),
-                    "Reasoning / Trade Thesis": st.column_config.TextColumn(width="large")
-                }
-            )
+            # Construct HTML Table for trades with styled badges and wrapping
+            html_code_trades = """
+<table class='rec-table'>
+    <thead>
+        <tr>
+            <th style='width: 18%'>Timestamp (UTC)</th>
+            <th style='width: 8%'>Ticker</th>
+            <th style='width: 10%'>Action</th>
+            <th style='width: 12%'>Amount</th>
+            <th style='width: 52%'>Reasoning / Trade Thesis</th>
+        </tr>
+    </thead>
+    <tbody>
+            """
+            for _, row in filtered_df.iterrows():
+                # Extract and format values
+                ts = pd.to_datetime(row["timestamp"]).strftime("%Y-%m-%d %H:%M:%S")
+                raw_ticker = row["ticker"]
+                action = row["action"]
+                amount_val = row["amount_usd"]
+                
+                if isinstance(amount_val, (int, float)):
+                    amount_str = f"${amount_val:.2f}"
+                else:
+                    amount_str = str(amount_val)
+                    if not amount_str.startswith("$"):
+                        try:
+                            amount_str = f"${float(amount_str):.2f}"
+                        except ValueError:
+                            pass
+                
+                reasoning = row["reasoning"] or ""
+                
+                # Badge selection
+                if action == "BUY":
+                    badge_class = "signal-buy"
+                elif action == "SELL":
+                    badge_class = "signal-liquidate"
+                else:
+                    badge_class = "signal-hold"
+                    
+                html_code_trades += f"""
+        <tr>
+            <td>{ts}</td>
+            <td><a class='ticker-link' href='https://finance.yahoo.com/quote/{raw_ticker}' target='_blank'>{raw_ticker}</a></td>
+            <td><span class='signal-badge {badge_class}'>{action}</span></td>
+            <td>{amount_str}</td>
+            <td class='thesis-text'>{reasoning}</td>
+        </tr>
+                """
+            html_code_trades += "</tbody></table>"
+            # Clean leading whitespace to prevent Markdown from interpreting indentation as preformatted blocks
+            cleaned_html_trades = "\n".join([line.strip() for line in html_code_trades.split("\n")])
+            st.markdown(cleaned_html_trades, unsafe_allow_html=True)
         else:
             st.info("No executed trades match the search filters.")
     else:
