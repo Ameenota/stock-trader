@@ -103,14 +103,15 @@ def load_latest_snapshot() -> dict:
     }
 
 def load_latest_recommendations() -> pd.DataFrame:
-    """Loads the latest market metrics and signals logged today."""
+    """Loads the market metrics and signals from the absolute latest batch run within the last 24 hours."""
     query = f"""
         SELECT ticker, raw_score, relative_rank, signal, current_price, moving_average_20d, analyst_consensus, thesis, timestamp
         FROM `{project}.{dataset_id}.infrastructure_market_metrics`
-        WHERE DATE(timestamp) = (
-            SELECT DATE(MAX(timestamp)) 
+        WHERE timestamp = (
+            SELECT MAX(timestamp) 
             FROM `{project}.{dataset_id}.infrastructure_market_metrics`
         )
+        AND timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
         ORDER BY relative_rank DESC
     """
     try:
