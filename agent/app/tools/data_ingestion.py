@@ -18,8 +18,10 @@ import pandas as pd
 import pandas_ta as ta
 import yfinance as yf
 
+from app.tools.ticker_universe import get_active_tickers
+
 # Predefined list of 9 AI infrastructure stocks + 1 market hedge ETF
-TICKERS = ["NVDA", "AMD", "TSM", "MU", "SMCI", "DELL", "VRT", "ETN", "CEG", "TLT"]
+TICKERS = get_active_tickers()
 
 
 from datetime import datetime

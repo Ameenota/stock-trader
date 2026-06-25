@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Union
 
 class SentimentAnalysis(BaseModel):
-    ticker: str = Field(description="The ticker symbol of the asset. Must be one of NVDA, AMD, TSM, MU, SMCI, DELL, VRT, ETN, CEG, TLT.")
+    ticker: str = Field(description="The ticker symbol of the asset. Must match the key from the news dictionary.")
     raw_score: float = Field(description="The raw sentiment score from -1.0 to 1.0.")
     thesis: str = Field(description="The thesis/reasoning behind the score based on the news.")
 

@@ -127,7 +127,8 @@ def test_ingest_market_data_structure(mock_ticker_class, mock_news_data):
 
     results = ingest_market_data(current_time=current_time)
 
-    expected_tickers = ["NVDA", "AMD", "TSM", "MU", "SMCI", "DELL", "VRT", "ETN", "CEG", "TLT"]
+    from app.tools.ticker_universe import get_active_tickers
+    expected_tickers = get_active_tickers()
     assert set(results.keys()) == set(expected_tickers)
 
     for ticker in expected_tickers:

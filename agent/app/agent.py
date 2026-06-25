@@ -59,6 +59,7 @@ robinhood_toolset = McpToolset(
 from app.tools.data_ingestion import ingest_market_news
 from app.tools.ranking import SentimentAnalysisResponse, process_sentiment_rankings
 from app.tools.bigquery_service import insert_trade_record
+from app.tools.ticker_universe import get_allowed_tickers
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.adk.tools import ToolContext
@@ -154,7 +155,7 @@ async def validate_and_intercept_trades(tool, args, tool_context) -> dict | None
     # 2. Enforce Predefined 10-Asset Universe
     # Inspect arguments for ticker symbol keys (e.g. 'symbol', 'ticker')
     ticker_keys = [k for k in args.keys() if "symbol" in k.lower() or "ticker" in k.lower()]
-    ALLOWED_TICKERS = {"NVDA", "AMD", "TSM", "MU", "SMCI", "DELL", "VRT", "ETN", "CEG", "TLT"}
+    ALLOWED_TICKERS = set(get_allowed_tickers())
     for key in ticker_keys:
         val = args.get(key)
         if val:
@@ -172,7 +173,7 @@ async def validate_and_intercept_trades(tool, args, tool_context) -> dict | None
                 ticker_str = str(ticker).strip().upper()
                 if ticker_str and ticker_str not in ALLOWED_TICKERS:
                     raise ValueError(
-                        f"Security Exception: Operation rejected. Ticker '{ticker_str}' is outside the authorized 10-asset universe."
+                        f"Security Exception: Operation rejected. Ticker '{ticker_str}' is outside the authorized asset universe."
                     )
 
     # 3. Dry-Run Interceptor: block order modifications and return simulated success
