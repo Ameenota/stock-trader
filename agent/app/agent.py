@@ -335,11 +335,88 @@ async def execute_trading_decisions(ranked_portfolio: list, dataset_id: str = "p
     if "INTEGRATION_TEST" in os.environ:
         del os.environ["INTEGRATION_TEST"]
 
+    # Fetch actual holdings and cash from Robinhood to inject into prompt context
+    print("\nFetching current portfolio state from Robinhood...")
+    total_cash = 100.0
+    holdings = []
+    
+    try:
+        tools = await robinhood_toolset.get_tools()
+        tools_dict = {t.name: t for t in tools}
+        
+        # Redacted target account format: select account ending in 48661
+        account_number = "ROBINHOOD_ACCOUNT_NUMBER"  # Default fallback
+        if "get_accounts" in tools_dict:
+            try:
+                accounts_res = await tools_dict["get_accounts"].run_async(args={}, tool_context=None)
+                results = accounts_res.get("structuredContent", {}).get("data", {}).get("results", [])
+                for acc in results:
+                    acc_num = acc.get("account_number")
+                    if acc_num and str(acc_num).endswith("48661"):
+                        account_number = str(acc_num)
+                        break
+            except Exception:
+                pass
+
+        if "get_portfolio" in tools_dict:
+            try:
+                port_res = await tools_dict["get_portfolio"].run_async(args={"account_number": account_number}, tool_context=None)
+                data = port_res.get("structuredContent", {}).get("data", {})
+                total_cash = float(data.get("cash", 100.0))
+            except Exception:
+                pass
+
+        if "get_equity_positions" in tools_dict:
+            try:
+                pos_res = await tools_dict["get_equity_positions"].run_async(args={"account_number": account_number}, tool_context=None)
+                positions = pos_res.get("structuredContent", {}).get("data", {}).get("positions", [])
+                
+                active_symbols = []
+                symbol_shares = {}
+                symbol_cost = {}
+                
+                for pos in positions:
+                    qty = float(pos.get("quantity", 0))
+                    if qty > 0:
+                        sym = pos["symbol"]
+                        active_symbols.append(sym)
+                        symbol_shares[sym] = qty
+                        symbol_cost[sym] = float(pos.get("average_buy_price", 0))
+
+                if active_symbols and "get_equity_quotes" in tools_dict:
+                    quotes_res = await tools_dict["get_equity_quotes"].run_async(args={"symbols": active_symbols}, tool_context=None)
+                    results = quotes_res.get("structuredContent", {}).get("data", {}).get("results", [])
+                    for res in results:
+                        quote = res.get("quote", {})
+                        sym = quote.get("symbol")
+                        if sym in symbol_shares:
+                            price = float(quote.get("last_non_reg_trade_price") or quote.get("last_trade_price") or 0.0)
+                            qty = symbol_shares[sym]
+                            holdings.append({
+                                "symbol": sym,
+                                "shares": qty,
+                                "average_buy_price": symbol_cost[sym],
+                                "current_price": price,
+                                "equity": qty * price
+                            })
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"   Warning: Failed to fetch live portfolio state: {e}")
+
+    print(f"   Current Cash: ${total_cash:.2f}")
+    print(f"   Current Holdings: {holdings}")
+
     session_service = InMemorySessionService()
     session = await session_service.create_session(user_id="cron_job", app_name="trading")
     runner = Runner(agent=trading_agent, session_service=session_service, app_name="trading")
 
     prompt_text = f"""Please perform today's trading execution and portfolio rebalancing.
+
+Here is your current starting Robinhood portfolio state:
+- Available Cash (Buying Power): ${total_cash:.2f}
+- Current Holdings (List of positions): {holdings}
+
 Here is the historical metrics log for all 10 assets over the past week:
 {weekly_metrics}"""
 
