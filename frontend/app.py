@@ -135,6 +135,56 @@ def load_trade_history() -> pd.DataFrame:
         st.error(f"Error loading trade history: {e}")
         return pd.DataFrame()
 
+# Company Logo domain mapping and helper
+TICKER_DOMAINS = {
+    "NVDA": "nvidia.com",
+    "AMD": "amd.com",
+    "TSM": "tsmc.com",
+    "MU": "micron.com",
+    "SMCI": "supermicro.com",
+    "DELL": "dell.com",
+    "VRT": "vertiv.com",
+    "ETN": "eaton.com",
+    "CEG": "constellationenergy.com",
+    "TLT": "ishares.com",
+    "MSFT": "microsoft.com",
+    "GOOGL": "google.com",
+    "AMZN": "amazon.com",
+    "META": "meta.com",
+    "ORCL": "oracle.com",
+    "AVGO": "broadcom.com",
+    "ANET": "arista.com",
+    "ARM": "arm.com",
+    "SNPS": "synopsys.com",
+    "CDNS": "cadence.com",
+    "ASML": "asml.com",
+    "AMAT": "appliedmaterials.com",
+    "LRCX": "lamresearch.com",
+    "KLAC": "kla.com",
+    "INTC": "intel.com",
+    "VST": "vistracorp.com",
+    "GE": "ge.com",
+    "PSTG": "purestorage.com",
+    "HPE": "hpe.com",
+    "PLTR": "palantir.com",
+    "IBM": "ibm.com",
+    "NOW": "servicenow.com",
+    "ADBE": "adobe.com",
+    "SAP": "sap.com",
+    "NET": "cloudflare.com",
+    "DDOG": "datadoghq.com",
+    "ANSS": "ansys.com",
+    "CRWD": "crowdstrike.com",
+    "PANW": "paloaltonetworks.com",
+    "QCOM": "qualcomm.com"
+}
+
+def get_logo_html(ticker: str) -> str:
+    domain = TICKER_DOMAINS.get(ticker.upper())
+    if domain:
+        return f"<img src='https://logo.clearbit.com/{domain}' style='width: 16px; height: 16px; border-radius: 4px; margin-right: 6px; vertical-align: middle;' onerror='this.style.display=\"none\"' />"
+    return ""
+
 # 4. Main App Rendering
 st.title("Autonomous Stock Trader")
 st.markdown("<p style='font-size: 1.1rem; color: #a0a0b0; margin-top: -1.5rem; margin-bottom: 2rem;'><strong>Fully end-to-end:</strong> Ingests daily market news via yfinance, analyzes sentiment with Gemini, deterministically ranks conviction, and executes live orders via <strong>MCP with Agentic Robinhood using real $$$</strong>.</p>", unsafe_allow_html=True)
@@ -287,7 +337,8 @@ with m4:
         else:
             color = other_colors[color_idx % len(other_colors)]
             color_idx += 1
-            asset_display = f"<a class='ticker-link' href='https://finance.yahoo.com/quote/{asset}' target='_blank'>{asset}</a>"
+            logo_img = get_logo_html(asset)
+            asset_display = f"<div style='display: flex; align-items: center;'>{logo_img}<a class='ticker-link' href='https://finance.yahoo.com/quote/{asset}' target='_blank'>{asset}</a></div>"
             
         val_str = f"${val:,.2f}"
         pct_str = f"{pct:.1f}%"
@@ -413,9 +464,10 @@ if not recs_df.empty:
         else:
             badge_class = "signal-hold"
             
+        logo_img = get_logo_html(ticker)
         html_code += f"""
         <tr>
-            <td><a class='ticker-link' href='https://finance.yahoo.com/quote/{ticker}' target='_blank'>{ticker}</a></td>
+            <td><div style='display: flex; align-items: center;'>{logo_img}<a class='ticker-link' href='https://finance.yahoo.com/quote/{ticker}' target='_blank'>{ticker}</a></div></td>
             <td>{score:+.2f}</td>
             <td>{rank}</td>
             <td><span class='signal-badge {badge_class}'>{sig}</span></td>
@@ -517,10 +569,11 @@ if not trades_df.empty:
                 else:
                     badge_class = "signal-hold"
                     
+                logo_img = get_logo_html(raw_ticker)
                 html_code_trades += f"""
         <tr>
             <td>{ts}</td>
-            <td><a class='ticker-link' href='https://finance.yahoo.com/quote/{raw_ticker}' target='_blank'>{raw_ticker}</a></td>
+            <td><div style='display: flex; align-items: center;'>{logo_img}<a class='ticker-link' href='https://finance.yahoo.com/quote/{raw_ticker}' target='_blank'>{raw_ticker}</a></div></td>
             <td><span class='signal-badge {badge_class}'>{action}</span></td>
             <td>{amount_str}</td>
             <td class='thesis-text'>{reasoning}</td>
