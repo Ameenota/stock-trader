@@ -202,41 +202,124 @@ with m4:
         plot_bgcolor='rgba(0,0,0,0)',
         font_color="white"
     )
-    with st.container(border=True):
-        st.markdown("<div style='text-align: center; font-size: 0.75rem; font-weight: 600; color: gray; margin-bottom: -1rem; margin-top: -0.4rem;'>PORTFOLIO ALLOCATION</div>", unsafe_allow_html=True)
-        st.plotly_chart(fig, use_container_width=True)
+    st.markdown("<div style='text-align: center; font-size: 0.75rem; font-weight: 600; color: gray; margin-bottom: -0.2rem; margin-top: -0.4rem;'>PORTFOLIO ALLOCATION</div>", unsafe_allow_html=True)
+    st.plotly_chart(fig, use_container_width=True)
 
 st.markdown("<hr/>", unsafe_allow_html=True)
 
-# 5. Latest Recommendations (Full Width)
+# 5. Latest Recommendations (Full Width Custom HTML Table)
 st.subheader("Daily AI Stock Recommendations")
 if not recs_df.empty:
-    # Select key columns for display
-    disp_df = recs_df[[
-        "ticker", "raw_score", "relative_rank", "signal", 
-        "current_price", "analyst_consensus", "thesis"
-    ]].copy()
-    
-    # Format columns
-    disp_df["ticker"] = disp_df["ticker"].apply(lambda t: f"https://finance.yahoo.com/quote/{t}")
-    disp_df["raw_score"] = disp_df["raw_score"].map(lambda x: f"{x:.2f}")
-    disp_df["current_price"] = disp_df["current_price"].map(lambda x: f"${x:.2f}" if pd.notnull(x) else "N/A")
-    disp_df.columns = ["Ticker", "Sentiment Score", "Rank", "Signal", "Price", "Consensus", "Thesis"]
-    
-    st.dataframe(
-        disp_df,
-        hide_index=True,
-        use_container_width=True,
-        column_config={
-            "Ticker": st.column_config.LinkColumn("Ticker", display_text=r"https://finance\.yahoo\.com/quote/(.*)", width="small"),
-            "Sentiment Score": st.column_config.TextColumn(width="small"),
-            "Rank": st.column_config.NumberColumn(width="small"),
-            "Signal": st.column_config.TextColumn(width="small"),
-            "Price": st.column_config.TextColumn(width="small"),
-            "Consensus": st.column_config.TextColumn(width="small"),
-            "Thesis": st.column_config.TextColumn(width="large")
+    # Inject Custom Table CSS
+    st.markdown("""
+    <style>
+        .rec-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 1rem;
+            font-size: 0.85rem;
+            color: #e0e0e0;
         }
-    )
+        .rec-table th {
+            background-color: #1a1a20;
+            border-bottom: 2px solid #2e2e38;
+            padding: 10px;
+            text-align: left;
+            font-weight: 600;
+            color: #a0a0b0;
+        }
+        .rec-table td {
+            padding: 12px 10px;
+            border-bottom: 1px solid #2e2e38;
+            vertical-align: top;
+        }
+        .rec-table tr:hover {
+            background-color: #16161c;
+        }
+        .ticker-link {
+            color: #3F8CFF;
+            text-decoration: none;
+            font-weight: 600;
+        }
+        .ticker-link:hover {
+            text-decoration: underline;
+        }
+        .thesis-text {
+            font-size: 0.78rem;
+            color: #b0b0c0;
+            line-height: 1.45;
+            white-space: normal;
+            word-break: break-word;
+        }
+        .signal-badge {
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            display: inline-block;
+        }
+        .signal-buy {
+            background-color: rgba(0, 198, 137, 0.15);
+            color: #00C689;
+        }
+        .signal-liquidate {
+            background-color: rgba(255, 76, 97, 0.15);
+            color: #FF4C61;
+        }
+        .signal-hold {
+            background-color: rgba(255, 162, 107, 0.15);
+            color: #FFA26B;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # Construct HTML Table
+    html_code = """
+    <table class='rec-table'>
+        <thead>
+            <tr>
+                <th style='width: 8%'>Ticker</th>
+                <th style='width: 10%'>Sentiment</th>
+                <th style='width: 6%'>Rank</th>
+                <th style='width: 14%'>Signal</th>
+                <th style='width: 10%'>Price</th>
+                <th style='width: 12%'>Consensus</th>
+                <th style='width: 40%'>Thesis</th>
+            </tr>
+        </thead>
+        <tbody>
+    """
+    for _, row in recs_df.iterrows():
+        ticker = row["ticker"]
+        score = float(row["raw_score"])
+        rank = int(row["relative_rank"])
+        sig = row["signal"]
+        price = row["current_price"]
+        price_str = f"${price:.2f}" if pd.notnull(price) else "N/A"
+        consensus = row["analyst_consensus"] or "N/A"
+        thesis = row["thesis"] or ""
+        
+        # Badge selection
+        if sig == "STRONG BUY":
+            badge_class = "signal-buy"
+        elif sig == "LIQUIDATE":
+            badge_class = "signal-liquidate"
+        else:
+            badge_class = "signal-hold"
+            
+        html_code += f"""
+            <tr>
+                <td><a class='ticker-link' href='https://finance.yahoo.com/quote/{ticker}' target='_blank'>{ticker}</a></td>
+                <td>{score:+.2f}</td>
+                <td>{rank}</td>
+                <td><span class='signal-badge {badge_class}'>{sig}</span></td>
+                <td>{price_str}</td>
+                <td>{consensus}</td>
+                <td class='thesis-text'>{thesis}</td>
+            </tr>
+        """
+    html_code += "</tbody></table>"
+    st.markdown(html_code, unsafe_allow_html=True)
 else:
     st.info("No daily recommendations logged yet.")
 
