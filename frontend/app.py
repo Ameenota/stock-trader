@@ -185,24 +185,24 @@ def get_logo_html(ticker: str) -> str:
         return f"<img src='https://www.google.com/s2/favicons?domain={domain}&sz=32' style='width: 16px; height: 16px; border-radius: 4px; margin-right: 6px; vertical-align: middle;' onerror='this.style.display=\"none\"' />"
     return ""
 
-def format_thesis_html(text: str, max_chars: int = 90) -> str:
+def format_thesis_html(text: str, max_chars: int = 60) -> str:
     if not text:
         return ""
     if len(text) <= max_chars:
-        return f"<span style='font-size: 0.82rem; color: #475569; line-height: 1.45;'>{text}</span>"
+        return f"<span style='font-size: 0.88rem; color: #334155; line-height: 1.45;'>{text}</span>"
     
     truncated = text[:max_chars]
     last_space = truncated.rfind(" ")
-    if last_space > 40:
+    if last_space > 30:
         truncated = truncated[:last_space]
         
     return f"""
     <details class="thesis-expander">
         <summary style="list-style: none; outline: none; cursor: pointer;">
-            <span class="collapsed-text" style="font-size: 0.82rem; color: #475569; line-height: 1.45; white-space: normal;">
+            <span class="collapsed-text" style="font-size: 0.88rem; color: #334155; line-height: 1.45; white-space: normal;">
                 {truncated}... <span style="color: #2563eb; font-weight: 600; white-space: nowrap;">more ▾</span>
             </span>
-            <span class="expanded-text" style="font-size: 0.82rem; color: #475569; line-height: 1.45; white-space: normal;">
+            <span class="expanded-text" style="font-size: 0.88rem; color: #334155; line-height: 1.45; white-space: normal;">
                 {text} <span style="color: #2563eb; font-weight: 600; white-space: nowrap;">less ▴</span>
             </span>
         </summary>
@@ -478,13 +478,13 @@ if not recs_df.empty:
 <table class='rec-table'>
     <thead>
         <tr>
-            <th style='width: 8%'>Ticker</th>
-            <th style='width: 10%'>Sentiment</th>
-            <th style='width: 6%'>Rank</th>
+            <th style='width: 10%'>Ticker</th>
+            <th style='width: 12%'>Sentiment</th>
+            <th style='width: 8%'>Rank</th>
             <th style='width: 14%'>Signal</th>
-            <th style='width: 10%'>Price</th>
-            <th style='width: 12%'>Consensus</th>
-            <th style='width: 40%'>Thesis</th>
+            <th style='width: 12%'>Price</th>
+            <th style='width: 14%'>Consensus</th>
+            <th style='width: 30%'>Thesis</th>
         </tr>
     </thead>
     <tbody>
@@ -576,11 +576,11 @@ if not trades_df.empty:
 <table class='rec-table'>
     <thead>
         <tr>
-            <th style='width: 18%'>Timestamp (UTC)</th>
-            <th style='width: 8%'>Ticker</th>
-            <th style='width: 10%'>Action</th>
-            <th style='width: 12%'>Amount</th>
-            <th style='width: 52%'>Reasoning / Trade Thesis</th>
+            <th style='width: 20%'>Timestamp (UTC)</th>
+            <th style='width: 10%'>Ticker</th>
+            <th style='width: 12%'>Action</th>
+            <th style='width: 13%'>Amount</th>
+            <th style='width: 45%'>Reasoning / Trade Thesis</th>
         </tr>
     </thead>
     <tbody>
