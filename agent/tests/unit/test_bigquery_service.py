@@ -73,6 +73,12 @@ def test_setup_bigquery(mock_bq_client):
     assert sentiment_table.schema[10].field_type == "FLOAT"
     assert sentiment_table.schema[11].name == "price_to_ma_ratio"
     assert sentiment_table.schema[11].field_type == "FLOAT"
+    assert sentiment_table.schema[12].name == "rsi"
+    assert sentiment_table.schema[12].field_type == "FLOAT"
+    assert sentiment_table.schema[13].name == "macd"
+    assert sentiment_table.schema[13].field_type == "FLOAT"
+    assert sentiment_table.schema[14].name == "macd_signal"
+    assert sentiment_table.schema[14].field_type == "FLOAT"
 
     # Verify second table (trade_history)
     trade_table = mock_bq_client.create_table.call_args_list[1][0][0]
@@ -127,7 +133,10 @@ def test_insert_sentiment(mock_bq_client):
             "target_price": 150.0,
             "current_price": 140.0,
             "moving_average_20d": 135.0,
-            "price_to_ma_ratio": 1.037
+            "price_to_ma_ratio": 1.037,
+            "rsi": 65.4,
+            "macd": 1.25,
+            "macd_signal": 0.95
         },
         {
             "ticker": "SMCI",
@@ -135,7 +144,10 @@ def test_insert_sentiment(mock_bq_client):
             "thesis": "Cash flow issues",
             "relative_rank": 1,
             "signal": "LIQUIDATE",
-            "raw_news": []
+            "raw_news": [],
+            "rsi": None,
+            "macd": None,
+            "macd_signal": None
         }
     ]
     
@@ -163,7 +175,10 @@ def test_insert_sentiment(mock_bq_client):
             "target_price": 150.0,
             "current_price": 140.0,
             "moving_average_20d": 135.0,
-            "price_to_ma_ratio": 1.037
+            "price_to_ma_ratio": 1.037,
+            "rsi": 65.4,
+            "macd": 1.25,
+            "macd_signal": 0.95
         },
         {
             "ticker": "SMCI",
@@ -177,7 +192,10 @@ def test_insert_sentiment(mock_bq_client):
             "target_price": None,
             "current_price": None,
             "moving_average_20d": None,
-            "price_to_ma_ratio": None
+            "price_to_ma_ratio": None,
+            "rsi": None,
+            "macd": None,
+            "macd_signal": None
         }
     ]
 
@@ -210,6 +228,9 @@ def test_get_latest_signals(mock_bq_client):
     row1.current_price = 140.0
     row1.moving_average_20d = 135.0
     row1.price_to_ma_ratio = 1.037
+    row1.rsi = 65.4
+    row1.macd = 1.25
+    row1.macd_signal = 0.95
 
     row2 = MagicMock()
     row2.ticker = "SMCI"
@@ -223,6 +244,9 @@ def test_get_latest_signals(mock_bq_client):
     row2.current_price = None
     row2.moving_average_20d = None
     row2.price_to_ma_ratio = None
+    row2.rsi = None
+    row2.macd = None
+    row2.macd_signal = None
 
     mock_results = [row1, row2]
     

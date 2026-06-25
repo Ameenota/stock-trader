@@ -53,8 +53,8 @@ def test_fetch_ticker_market_data_success(mock_ticker_class, mock_news_data):
         "currentPrice": 140.0
     }
     
-    # Mock history dataframe (20 closing values: from 100.0 to 119.0)
-    close_prices = [float(100 + i) for i in range(20)]
+    # Mock history dataframe (45 closing values to satisfy pandas-ta MACD/RSI requirement)
+    close_prices = [float(100 + i) for i in range(45)]
     mock_ticker_instance.history.return_value = pd.DataFrame({
         "Close": close_prices
     })
@@ -64,8 +64,8 @@ def test_fetch_ticker_market_data_success(mock_ticker_class, mock_news_data):
     results = fetch_ticker_market_data("NVDA", current_time=current_time)
 
     # Calculate expected values
-    expected_current_price = 119.0
-    expected_ma_20 = sum(close_prices) / 20  # 109.5
+    expected_current_price = 144.0
+    expected_ma_20 = sum(close_prices[-20:]) / 20  # 134.5
     expected_ratio = expected_current_price / expected_ma_20
 
     # Verification
@@ -76,6 +76,9 @@ def test_fetch_ticker_market_data_success(mock_ticker_class, mock_news_data):
     assert results["current_price"] == expected_current_price
     assert pytest.approx(results["moving_average_20d"]) == expected_ma_20
     assert pytest.approx(results["price_to_ma_ratio"]) == expected_ratio
+    assert results["rsi"] is not None
+    assert results["macd"] is not None
+    assert results["macd_signal"] is not None
 
 
 @patch("app.tools.data_ingestion.yf.Ticker")
@@ -101,6 +104,9 @@ def test_fetch_ticker_market_data_empty_history_fallback(mock_ticker_class, mock
     assert results["current_price"] == 115.0  # Fell back to currentPrice info
     assert results["moving_average_20d"] is None
     assert results["price_to_ma_ratio"] is None
+    assert results["rsi"] is None
+    assert results["macd"] is None
+    assert results["macd_signal"] is None
 
 
 @patch("app.tools.data_ingestion.yf.Ticker")
@@ -113,7 +119,7 @@ def test_ingest_market_data_structure(mock_ticker_class, mock_news_data):
         "recommendationKey": "strong_buy",
         "targetMeanPrice": 200.0
     }
-    close_prices = [float(150 + i) for i in range(20)]
+    close_prices = [float(150 + i) for i in range(45)]
     mock_ticker_instance.history.return_value = pd.DataFrame({
         "Close": close_prices
     })
@@ -130,6 +136,9 @@ def test_ingest_market_data_structure(mock_ticker_class, mock_news_data):
         assert len(data["news"]) == 1
         assert data["analyst_consensus"] == "strong_buy"
         assert data["target_price"] == 200.0
-        assert data["current_price"] == 169.0
-        assert data["moving_average_20d"] == 159.5
-        assert pytest.approx(data["price_to_ma_ratio"]) == (169.0 / 159.5)
+        assert data["current_price"] == 194.0
+        assert data["moving_average_20d"] == 184.5
+        assert pytest.approx(data["price_to_ma_ratio"]) == (194.0 / 184.5)
+        assert data["rsi"] is not None
+        assert data["macd"] is not None
+        assert data["macd_signal"] is not None

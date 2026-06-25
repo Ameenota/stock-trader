@@ -126,10 +126,14 @@ Our rules:
 2. We hold a maximum of 3 assets at any time.
 3. Our total target budget is $100.
 4. You can dynamically allocate weights as you see fit. If one stock has a super high signal, you can allocate up to 100% of the $100 to it, or split the cash among 2 or 3 stocks.
-5. Identify which stocks/assets to hold, buy, or liquidate based on the 3 signals (Sentiment, Momentum, and Analyst recommendation) over the weekly historical range.
+5. Identify which stocks/assets to hold, buy, or liquidate based on the signals (Sentiment, Momentum, Analyst recommendation, and Technical Indicators like RSI and MACD) over the weekly historical range.
 6. TLT is our treasury option (safe-haven / fallback asset). If tech/AI signals are generally weak, crashing, or there are fewer than 3 strong AI positions, allocate the defensive portion (or all) of the budget to TLT to protect capital.
 7. Liquidate positions (sell 100%) for any asset that is no longer recommended to hold.
-8. Log the reasoning for every executed transaction (BUY, SELL, or LIQUIDATE) you perform by calling insert_trade_record. Use exactly "BUY", "SELL", or "LIQUIDATE" for the action parameter. Do NOT log or call insert_trade_record for HOLD decisions, as they are not active trades. """
+8. Log the reasoning for every executed transaction (BUY, SELL, or LIQUIDATE) you perform by calling insert_trade_record. Use exactly "BUY", "SELL", or "LIQUIDATE" for the action parameter. Do NOT log or call insert_trade_record for HOLD decisions, as they are not active trades.
+9. Utilize Technical Indicators (rsi, macd, macd_signal) to improve trade execution timing:
+   - Be cautious of buying/increasing positions in assets with RSI > 70 (overbought condition).
+   - Look for entry/buying signals when RSI is near or below 30 (oversold condition).
+   - Use MACD crossovers (e.g., macd crossing above macd_signal is a bullish signal; macd crossing below macd_signal is a bearish signal) to confirm trend momentum shifts. """
 
 
 async def validate_and_intercept_trades(tool, args, tool_context) -> dict | None:
@@ -247,6 +251,9 @@ async def run_daily_analysis_pipeline(dataset_id: str = "portfolio_analytics") -
         item["current_price"] = ticker_data.get("current_price")
         item["moving_average_20d"] = ticker_data.get("moving_average_20d")
         item["price_to_ma_ratio"] = ticker_data.get("price_to_ma_ratio")
+        item["rsi"] = ticker_data.get("rsi")
+        item["macd"] = ticker_data.get("macd")
+        item["macd_signal"] = ticker_data.get("macd_signal")
 
     # 5. Log decisions to BigQuery
     insert_sentiment(ranked_portfolio, dataset_id=dataset_id)

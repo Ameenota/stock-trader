@@ -220,6 +220,7 @@ with col_recs:
         ]].copy()
         
         # Format columns
+        disp_df["ticker"] = disp_df["ticker"].apply(lambda t: f"https://finance.yahoo.com/quote/{t}")
         disp_df["raw_score"] = disp_df["raw_score"].map(lambda x: f"{x:.2f}")
         disp_df["current_price"] = disp_df["current_price"].map(lambda x: f"${x:.2f}" if pd.notnull(x) else "N/A")
         disp_df.columns = ["Ticker", "Sentiment Score", "Rank", "Signal", "Price", "Consensus", "Thesis"]
@@ -229,7 +230,7 @@ with col_recs:
             hide_index=True,
             use_container_width=True,
             column_config={
-                "Ticker": st.column_config.TextColumn(width="small"),
+                "Ticker": st.column_config.LinkColumn("Ticker", display_text=r"https://finance\.yahoo\.com/quote/(.*)", width="small"),
                 "Sentiment Score": st.column_config.TextColumn(width="small"),
                 "Rank": st.column_config.NumberColumn(width="small"),
                 "Signal": st.column_config.TextColumn(width="small"),
@@ -291,6 +292,7 @@ if not trades_df.empty:
             
             # Select columns to display (hide dry_run column)
             disp_df = filtered_df[["timestamp", "ticker", "action", "amount_usd", "reasoning"]].copy()
+            disp_df["ticker"] = disp_df["ticker"].apply(lambda t: f"https://finance.yahoo.com/quote/{t}")
             disp_df.columns = ["Timestamp (UTC)", "Ticker", "Action", "Amount", "Reasoning / Trade Thesis"]
             
             # Paginate by showing standard Streamlit scrollable dataframe
@@ -300,7 +302,7 @@ if not trades_df.empty:
                 use_container_width=True,
                 column_config={
                     "Timestamp (UTC)": st.column_config.TextColumn(width="medium"),
-                    "Ticker": st.column_config.TextColumn(width="small"),
+                    "Ticker": st.column_config.LinkColumn("Ticker", display_text=r"https://finance\.yahoo\.com/quote/(.*)", width="small"),
                     "Action": st.column_config.TextColumn(width="small"),
                     "Amount": st.column_config.TextColumn(width="small"),
                     "Reasoning / Trade Thesis": st.column_config.TextColumn(width="large")

@@ -14,6 +14,8 @@
 
 import time
 from typing import Dict, List, Any
+import pandas as pd
+import pandas_ta as ta
 import yfinance as yf
 
 # Predefined list of 9 AI infrastructure stocks + 1 market hedge ETF
@@ -114,7 +116,10 @@ def fetch_ticker_market_data(ticker: str, current_time: float | None = None) -> 
         "target_price": None,
         "current_price": None,
         "moving_average_20d": None,
-        "price_to_ma_ratio": None
+        "price_to_ma_ratio": None,
+        "rsi": None,
+        "macd": None,
+        "macd_signal": None
     }
 
     try:
@@ -161,7 +166,7 @@ def fetch_ticker_market_data(ticker: str, current_time: float | None = None) -> 
     except Exception:
         pass
 
-    # 3. Fetch History for Momentum
+    # 3. Fetch History for Momentum & Technical Indicators
     try:
         # Use 2mo to ensure we have at least 20 trading days
         history = stock.history(period="2mo")
@@ -174,6 +179,26 @@ def fetch_ticker_market_data(ticker: str, current_time: float | None = None) -> 
                 data["moving_average_20d"] = float(ma_20_series.mean())
                 if data["moving_average_20d"] and data["moving_average_20d"] > 0:
                     data["price_to_ma_ratio"] = data["current_price"] / data["moving_average_20d"]
+                
+                # Compute Technical Indicators (RSI & MACD) using pandas-ta
+                try:
+                    rsi_series = history.ta.rsi(close="Close", length=14)
+                    if rsi_series is not None and not rsi_series.empty:
+                        last_rsi = rsi_series.iloc[-1]
+                        data["rsi"] = float(last_rsi) if pd.notnull(last_rsi) else None
+                except Exception:
+                    pass
+                
+                try:
+                    macd_df = history.ta.macd(close="Close", fast=12, slow=26, signal=9)
+                    if macd_df is not None and not macd_df.empty:
+                        # pandas-ta columns for MACD default parameters: MACD_12_26_9, MACDs_12_26_9
+                        macd_val = macd_df.iloc[-1].get("MACD_12_26_9")
+                        macd_sig_val = macd_df.iloc[-1].get("MACDs_12_26_9")
+                        data["macd"] = float(macd_val) if pd.notnull(macd_val) else None
+                        data["macd_signal"] = float(macd_sig_val) if pd.notnull(macd_sig_val) else None
+                except Exception:
+                    pass
     except Exception:
         pass
 
@@ -211,9 +236,9 @@ def ingest_market_data(current_time: float | None = None) -> Dict[str, Dict[str,
 
 def print_portfolio_table(portfolio: list) -> None:
     """Renders a beautiful ASCII table of the ranked portfolio and trade signals."""
-    print("\n" + "="*145)
-    print(f"{'Ticker':<6} | {'Score':<6} | {'Rank':<5} | {'Signal':<11} | {'Price':<8} | {'20d SMA':<8} | {'Price/MA':<8} | {'Consensus':<10} | {'Thesis'}")
-    print("="*145)
+    print("\n" + "="*175)
+    print(f"{'Ticker':<6} | {'Score':<6} | {'Rank':<5} | {'Signal':<11} | {'Price':<8} | {'20d SMA':<8} | {'Price/MA':<8} | {'RSI':<6} | {'MACD':<8} | {'MACD Sig':<8} | {'Consensus':<10} | {'Thesis'}")
+    print("="*175)
     for item in portfolio:
         thesis = item.get("thesis", "")
         # Truncate thesis if it's too long for a clean terminal output
@@ -224,7 +249,13 @@ def print_portfolio_table(portfolio: list) -> None:
         ma_str = f"${ma:.2f}" if ma is not None else "N/A"
         ratio = item.get("price_to_ma_ratio")
         ratio_str = f"{ratio:.3f}" if ratio is not None else "N/A"
+        rsi = item.get("rsi")
+        rsi_str = f"{rsi:.1f}" if rsi is not None else "N/A"
+        macd = item.get("macd")
+        macd_str = f"{macd:.3f}" if macd is not None else "N/A"
+        macd_sig = item.get("macd_signal")
+        macd_sig_str = f"{macd_sig:.3f}" if macd_sig is not None else "N/A"
         consensus = item.get("analyst_consensus") or "N/A"
         
-        print(f"{item['ticker']:<6} | {item['raw_score']:<6.2f} | {item['relative_rank']:<5} | {item['signal']:<11} | {price_str:<8} | {ma_str:<8} | {ratio_str:<8} | {consensus:<10} | {truncated_thesis}")
-    print("="*145 + "\n")
+        print(f"{item['ticker']:<6} | {item['raw_score']:<6.2f} | {item['relative_rank']:<5} | {item['signal']:<11} | {price_str:<8} | {ma_str:<8} | {ratio_str:<8} | {rsi_str:<6} | {macd_str:<8} | {macd_sig_str:<8} | {consensus:<10} | {truncated_thesis}")
+    print("="*175 + "\n")

@@ -57,6 +57,9 @@ def setup_bigquery(dataset_id: str = "portfolio_analytics") -> None:
         bigquery.SchemaField("current_price", "FLOAT", mode="NULLABLE"),
         bigquery.SchemaField("moving_average_20d", "FLOAT", mode="NULLABLE"),
         bigquery.SchemaField("price_to_ma_ratio", "FLOAT", mode="NULLABLE"),
+        bigquery.SchemaField("rsi", "FLOAT", mode="NULLABLE"),
+        bigquery.SchemaField("macd", "FLOAT", mode="NULLABLE"),
+        bigquery.SchemaField("macd_signal", "FLOAT", mode="NULLABLE"),
     ]
     sentiment_table = bigquery.Table(sentiment_table_id, schema=sentiment_schema)
     try:
@@ -151,6 +154,15 @@ def insert_sentiment(
         ratio_val = item.get("price_to_ma_ratio")
         if ratio_val is not None:
             ratio_val = float(ratio_val)
+        rsi_val = item.get("rsi")
+        if rsi_val is not None:
+            rsi_val = float(rsi_val)
+        macd_val = item.get("macd")
+        if macd_val is not None:
+            macd_val = float(macd_val)
+        macd_sig_val = item.get("macd_signal")
+        if macd_sig_val is not None:
+            macd_sig_val = float(macd_sig_val)
 
         rows_to_insert.append({
             "ticker": item["ticker"],
@@ -164,7 +176,10 @@ def insert_sentiment(
             "target_price": target_price_val,
             "current_price": current_price_val,
             "moving_average_20d": ma_20_val,
-            "price_to_ma_ratio": ratio_val
+            "price_to_ma_ratio": ratio_val,
+            "rsi": rsi_val,
+            "macd": macd_val,
+            "macd_signal": macd_sig_val
         })
         
     try:
@@ -198,7 +213,7 @@ def get_latest_signals(
 
     # Query latest signals matching STRONG BUY or LIQUIDATE for the given date, ordered by timestamp desc
     query = f"""
-        SELECT ticker, raw_score, thesis, relative_rank, signal, timestamp, analyst_consensus, target_price, current_price, moving_average_20d, price_to_ma_ratio
+        SELECT ticker, raw_score, thesis, relative_rank, signal, timestamp, analyst_consensus, target_price, current_price, moving_average_20d, price_to_ma_ratio, rsi, macd, macd_signal
         FROM `{table_id}`
         WHERE DATE(timestamp) = @target_date
           AND signal IN ('STRONG BUY', 'LIQUIDATE')
@@ -227,7 +242,10 @@ def get_latest_signals(
             "target_price": getattr(row, "target_price", None),
             "current_price": getattr(row, "current_price", None),
             "moving_average_20d": getattr(row, "moving_average_20d", None),
-            "price_to_ma_ratio": getattr(row, "price_to_ma_ratio", None)
+            "price_to_ma_ratio": getattr(row, "price_to_ma_ratio", None),
+            "rsi": getattr(row, "rsi", None),
+            "macd": getattr(row, "macd", None),
+            "macd_signal": getattr(row, "macd_signal", None)
         })
         
     return signals
@@ -337,7 +355,7 @@ def get_historical_metrics(
     table_id = f"{client.project}.{dataset_id}.infrastructure_market_metrics"
 
     query = f"""
-        SELECT ticker, raw_score, thesis, relative_rank, signal, timestamp, analyst_consensus, target_price, current_price, moving_average_20d, price_to_ma_ratio
+        SELECT ticker, raw_score, thesis, relative_rank, signal, timestamp, analyst_consensus, target_price, current_price, moving_average_20d, price_to_ma_ratio, rsi, macd, macd_signal
         FROM `{table_id}`
         WHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @days DAY)
         ORDER BY ticker, timestamp ASC
@@ -365,7 +383,10 @@ def get_historical_metrics(
             "target_price": getattr(row, "target_price", None),
             "current_price": getattr(row, "current_price", None),
             "moving_average_20d": getattr(row, "moving_average_20d", None),
-            "price_to_ma_ratio": getattr(row, "price_to_ma_ratio", None)
+            "price_to_ma_ratio": getattr(row, "price_to_ma_ratio", None),
+            "rsi": getattr(row, "rsi", None),
+            "macd": getattr(row, "macd", None),
+            "macd_signal": getattr(row, "macd_signal", None)
         })
         
     return metrics
@@ -391,7 +412,7 @@ def get_latest_market_metrics(
     table_id = f"{client.project}.{dataset_id}.infrastructure_market_metrics"
 
     query = f"""
-        SELECT ticker, raw_score, thesis, relative_rank, signal, timestamp, analyst_consensus, target_price, current_price, moving_average_20d, price_to_ma_ratio
+        SELECT ticker, raw_score, thesis, relative_rank, signal, timestamp, analyst_consensus, target_price, current_price, moving_average_20d, price_to_ma_ratio, rsi, macd, macd_signal
         FROM `{table_id}`
         WHERE DATE(timestamp) = @target_date
         ORDER BY relative_rank DESC
@@ -419,7 +440,10 @@ def get_latest_market_metrics(
             "target_price": getattr(row, "target_price", None),
             "current_price": getattr(row, "current_price", None),
             "moving_average_20d": getattr(row, "moving_average_20d", None),
-            "price_to_ma_ratio": getattr(row, "price_to_ma_ratio", None)
+            "price_to_ma_ratio": getattr(row, "price_to_ma_ratio", None),
+            "rsi": getattr(row, "rsi", None),
+            "macd": getattr(row, "macd", None),
+            "macd_signal": getattr(row, "macd_signal", None)
         })
         
     return metrics
