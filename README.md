@@ -86,5 +86,5 @@ To complete your Kaggle Capstone Project submission, you must perform the follow
 
 ## 🔮 Future Improvements
 
-- [ ] **Additional Technical Indicators**: Integrate `pandas-ta` to calculate extra technical signals (like RSI or MACD) from the `yfinance` history, giving the Trading Agent more robust entry/exit timing data alongside sentiment scores.
 - [ ] **Dynamic Asset Screener**: Replace the hardcoded list of 10 AI stocks with an initial screening step where an agent dynamically finds the top trending tech/infrastructure stocks of the week.
+
