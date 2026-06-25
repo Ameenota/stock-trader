@@ -195,24 +195,79 @@ with m4:
         rows.append({"Asset": "Cash", "Value (USD)": snap["total_cash"]})
         allocation_df = pd.DataFrame(rows)
         
-    # Plotly donut chart
-    fig = px.pie(
-        allocation_df,
-        values="Value (USD)",
-        names="Asset",
-        hole=0.4,
-        color_discrete_sequence=["#6C5DD3", "#3F8CFF", "#00C689", "#FFA26B", "#FF4C61", "#D3D3D3"]
-    )
-    fig.update_layout(
-        margin=dict(l=10, r=10, t=10, b=10),
-        height=130,
-        showlegend=False,
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)',
-        font_color="white"
-    )
-    st.markdown("<div style='text-align: center; font-size: 0.75rem; font-weight: 600; color: gray; margin-bottom: -0.2rem; margin-top: -0.4rem;'>PORTFOLIO ALLOCATION</div>", unsafe_allow_html=True)
-    st.plotly_chart(fig, use_container_width=True)
+    # Custom Styled Allocation Table
+    total_val = allocation_df["Value (USD)"].sum()
+    allocation_df["Allocation (%)"] = (allocation_df["Value (USD)"] / total_val) * 100
+    allocation_df = allocation_df.sort_values(by="Value (USD)", ascending=False)
+
+    st.markdown("""
+    <style>
+        .alloc-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.8rem;
+            color: #e0e0e0;
+            margin-top: 0.2rem;
+        }
+        .alloc-table th {
+            background-color: #1a1a20;
+            border-bottom: 2px solid #2e2e38;
+            padding: 4px 6px;
+            text-align: left;
+            font-weight: 600;
+            color: #a0a0b0;
+            font-size: 0.72rem;
+        }
+        .alloc-table td {
+            padding: 6px;
+            border-bottom: 1px solid #2e2e38;
+            vertical-align: middle;
+        }
+        .alloc-table tr:hover {
+            background-color: #16161c;
+        }
+    </style>
+    <div style='text-align: center; font-size: 0.75rem; font-weight: 600; color: gray; margin-bottom: 0.4rem; margin-top: -0.4rem;'>PORTFOLIO ALLOCATION</div>
+    """, unsafe_allow_html=True)
+
+    html_code = "<table class='alloc-table'><thead><tr><th>Asset</th><th>Value</th><th>Allocation</th></tr></thead><tbody>"
+    
+    other_colors = ["#00C689", "#FFA26B", "#FF4C61", "#D3D3D3"]
+    color_idx = 0
+    
+    for _, row in allocation_df.iterrows():
+        asset = row["Asset"]
+        val = row["Value (USD)"]
+        pct = row["Allocation (%)"]
+        
+        if asset == "Cash":
+            color = "#3F8CFF"
+            asset_display = "<strong style='color: #3F8CFF;'>Cash</strong>"
+        else:
+            color = other_colors[color_idx % len(other_colors)]
+            color_idx += 1
+            asset_display = f"<a class='ticker-link' href='https://finance.yahoo.com/quote/{asset}' target='_blank'>{asset}</a>"
+            
+        val_str = f"${val:,.2f}"
+        pct_str = f"{pct:.1f}%"
+        
+        html_code += f"""
+        <tr>
+            <td>{asset_display}</td>
+            <td>{val_str}</td>
+            <td>
+                <div style='display: flex; align-items: center; justify-content: space-between;'>
+                    <span style='font-weight: 600;'>{pct_str}</span>
+                    <div style='background-color: #2e2e38; border-radius: 3px; width: 40px; height: 6px; margin-left: 8px; overflow: hidden; flex-shrink: 0;'>
+                        <div style='background-color: {color}; width: {pct}%; height: 100%; border-radius: 3px;'></div>
+                    </div>
+                </div>
+            </td>
+        </tr>
+        """
+    html_code += "</tbody></table>"
+    cleaned_html = "\n".join([line.strip() for line in html_code.split("\n")])
+    st.markdown(cleaned_html, unsafe_allow_html=True)
 
 st.markdown("<hr/>", unsafe_allow_html=True)
 
