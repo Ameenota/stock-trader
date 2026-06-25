@@ -131,4 +131,6 @@ To complete your Kaggle Capstone Project submission, you must perform the follow
 ## 🔮 Future Improvements
 
 - [ ] **Reconciliation & Status Sync**: Query Robinhood orders via MCP post-execution to update local database logs with true execution status (filled vs. cancelled), actual filled share amounts, and final execution prices, rather than only displaying the submitted details.
+- [ ] **Hysteresis & Swap Buffer**: Only swap an existing holding if the new opportunity has a significantly higher conviction score (e.g., delta > 0.3) to prevent marginal churn.
+- [ ] **Minimum Holding Period**: Enforce a minimum holding time of 3-5 trading days for newly purchased assets before they can be sold, protecting the portfolio from day-to-day news noise (except during extreme bearish signals < -0.5).
 
