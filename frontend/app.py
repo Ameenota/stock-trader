@@ -275,19 +275,19 @@ if not recs_df.empty:
 
     # Construct HTML Table
     html_code = """
-    <table class='rec-table'>
-        <thead>
-            <tr>
-                <th style='width: 8%'>Ticker</th>
-                <th style='width: 10%'>Sentiment</th>
-                <th style='width: 6%'>Rank</th>
-                <th style='width: 14%'>Signal</th>
-                <th style='width: 10%'>Price</th>
-                <th style='width: 12%'>Consensus</th>
-                <th style='width: 40%'>Thesis</th>
-            </tr>
-        </thead>
-        <tbody>
+<table class='rec-table'>
+    <thead>
+        <tr>
+            <th style='width: 8%'>Ticker</th>
+            <th style='width: 10%'>Sentiment</th>
+            <th style='width: 6%'>Rank</th>
+            <th style='width: 14%'>Signal</th>
+            <th style='width: 10%'>Price</th>
+            <th style='width: 12%'>Consensus</th>
+            <th style='width: 40%'>Thesis</th>
+        </tr>
+    </thead>
+    <tbody>
     """
     for _, row in recs_df.iterrows():
         ticker = row["ticker"]
@@ -308,18 +308,20 @@ if not recs_df.empty:
             badge_class = "signal-hold"
             
         html_code += f"""
-            <tr>
-                <td><a class='ticker-link' href='https://finance.yahoo.com/quote/{ticker}' target='_blank'>{ticker}</a></td>
-                <td>{score:+.2f}</td>
-                <td>{rank}</td>
-                <td><span class='signal-badge {badge_class}'>{sig}</span></td>
-                <td>{price_str}</td>
-                <td>{consensus}</td>
-                <td class='thesis-text'>{thesis}</td>
-            </tr>
+        <tr>
+            <td><a class='ticker-link' href='https://finance.yahoo.com/quote/{ticker}' target='_blank'>{ticker}</a></td>
+            <td>{score:+.2f}</td>
+            <td>{rank}</td>
+            <td><span class='signal-badge {badge_class}'>{sig}</span></td>
+            <td>{price_str}</td>
+            <td>{consensus}</td>
+            <td class='thesis-text'>{thesis}</td>
+        </tr>
         """
     html_code += "</tbody></table>"
-    st.markdown(html_code, unsafe_allow_html=True)
+    # Clean leading whitespace to prevent Markdown from interpreting indentation as preformatted blocks
+    cleaned_html = "\n".join([line.strip() for line in html_code.split("\n")])
+    st.markdown(cleaned_html, unsafe_allow_html=True)
 else:
     st.info("No daily recommendations logged yet.")
 
