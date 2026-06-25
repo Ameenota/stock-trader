@@ -2,11 +2,10 @@
 
 This repository contains the **Autonomous Stock Trader**, a fully automated trading and portfolio management system built as a Capstone submission for Google's **5-Day AI Agents Intensive Vibe Coding Course**. 
 
-The system leverages Google's Gemini models, the Agent Development Kit (ADK), Model Context Protocol (MCP) servers, and BigQuery data warehousing to evaluate market signals, manage risk, execute trades on a $100 Robinhood sandbox, and visualize performance in real-time.
+The system leverages Google's Gemini models, the Agent Development Kit (ADK), Model Context Protocol (MCP) servers, and BigQuery data warehousing to evaluate market signals, manage risk, execute trades with real $$ on a $100 Robinhood account, and visualize performance in near real-time.
 
 - **Kaggle Contest**: [Google AI Agents Intensive Capstone Project](https://www.kaggle.com/competitions/5-day-ai-agents-intensive-vibecoding-course-with-google)
 - **Live Deployed Dashboard**: [Streamlit Portfolio Dashboard](https://portfolio-dashboard-412197301452.us-central1.run.app)
-- **Demo Walkthrough Video**: `[Insert Link to Your Recorded Walkthrough Video Here]`
 
 ---
 
@@ -41,12 +40,12 @@ graph TD
 
 ## 💡 Contest Writeup: Project Evaluation & Design
 
-### 1. Project Overview & "Thin Vertical Slice"
+### 1. Overview 
 * **The Problem**: Executing algorithmic trades directly based on raw LLM reasoning is highly risky (hallucinations, over-leveraging, target account confusion). Furthermore, querying brokerages in real-time on dashboards frequently fails due to session expirations or MFA blockages.
-* **Our Thin Vertical Slice**: We designed a daily pipeline that automatically ingests tech news, scores sentiment using Gemini, applies deterministic risk checks, triggers a trading agent to execute queued orders via an MCP server on a $100 Robinhood sandbox, logs states to BigQuery, and serves a decoupled, dark-themed Streamlit dashboard.
+* **Our Thin Vertical Slice**: We designed a daily pipeline that automatically ingests tech news, scores sentiment using Gemini, applies deterministic risk checks, triggers a trading agent to execute queued orders via an MCP server on a $100 Robinhood account, logs states to BigQuery, and serves a decoupled, dark-themed Streamlit dashboard.
 * **Target Audience**: Retail investors seeking safe, autonomous, AI-driven portfolio rebalancing with high observability.
 
-### 2. Key Concepts Demonstrated (Intensive Course Topics)
+### 2. Course Topics Demonstrated
 * **Multi-Agent Coordination & ADK**: We decoupled logic into two specialized agents:
   - `sentiment_agent`: Analyzes market news and computes sentiment scores.
   - `trading_agent`: Reviews cash, queries historical signals, manages weights, and places orders.
@@ -54,29 +53,24 @@ graph TD
 * **Double Account Guardrails & Interceptor Callback**:
   - *Prompt Protection*: Instructs the agent to only target the account ending in `48661`.
   - *Code Interceptor*: A Python callback inspects all tool arguments in real-time, blocking unauthorized assets, enforcing account validation, and returning simulated success packets when dry-run mode (`SKIP_LIVE_TRADES=true`) is active.
-* **Telemetry & Decoupled Audit Logging (BigQuery)**: All daily recommendations, executed trades, and account equity/cash snapshots are written to GCP BigQuery. The Streamlit dashboard queries BigQuery directly, completely bypassing Robinhood at render time to prevent MFA blocks.
-* **Premium Dark Mode Frontend**: A Streamlit dashboard custom-styled after standard financial software (StockPeers dark theme) featuring Plotly donuts, metric return deltas, and filterable trade history logs.
+* **Telemetry & Decoupled Audit Logging (BigQuery)**: All daily recommendations, executed trades, and account equity/cash snapshots are written to GCP BigQuery. The Streamlit dashboard queries BigQuery directly, completely bypassing Robinhood at render time to prevent authentication blocks.
 
 ---
 
 ## 🚦 Architectural Constraints
-* **Asset Universe**: Strictly limited to **10 assets** (9 AI infrastructure stocks: NVDA, AMD, TSM, MU, SMCI, DELL, VRT, ETN, CEG + 1 Treasury hedge: TLT).
+* **Asset Universe**: I strictly limited to **10 assets** (9 AI infrastructure stocks: NVDA, AMD, TSM, MU, SMCI, DELL, VRT, ETN, CEG + 1 Treasury hedge: TLT). The hedge is only used when all AI stocks are down.
 * **Sandbox Limit**: Execution budget capped at **$100** total starting equity.
 * **Traceability**: All execution steps, reasoning strings, and account snapshots must be logged to BigQuery.
-
+  
 ---
 
 ## 🛠️ Deployed Streamlit Dashboard
 The frontend runs as a containerized service deployed to **Google Cloud Run**.
 - **Live URL**: [https://portfolio-dashboard-412197301452.us-central1.run.app](https://portfolio-dashboard-412197301452.us-central1.run.app)
-- **Local Dev Launch**:
-  ```bash
-  streamlit run frontend/app.py --server.port=8501
-  ```
 
 ---
 
-## 📋 Open TODO List for Submission
+## 📋 Open TODO List 
 
 To complete your Kaggle Capstone Project submission, you must perform the following actions:
 
