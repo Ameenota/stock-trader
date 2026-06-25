@@ -204,6 +204,7 @@ def log_trading_decisions(decisions, tool_context: ToolContext) -> str:
 
 async def validate_and_intercept_trades(tool, args, tool_context) -> dict | None:
     """Interceptor callback (Double Guardrail + Dry Run) for trading execution."""
+    print(f"   [DEBUG INTERCEPT] Tool '{tool.name}' called with args: {args}")
     # 1. Enforce Robinhood Account Restriction
     # Inspect arguments for account number key (e.g. 'account_number', 'account')
     account_keys = [k for k in args.keys() if "account" in k.lower()]
@@ -407,33 +408,24 @@ async def execute_trading_decisions(
         tools = await robinhood_toolset.get_tools()
         tools_dict = {t.name: t for t in tools}
         
-        # Redacted target account format: select account ending in 48661
-        account_number = None
-        if "get_accounts" in tools_dict:
-            try:
-                accounts_res = await tools_dict["get_accounts"].run_async(args={}, tool_context=None)
-                results = accounts_res.get("structuredContent", {}).get("data", {}).get("results", [])
-                for acc in results:
-                    acc_num = acc.get("account_number")
-                    if acc_num and str(acc_num).endswith("48661"):
-                        account_number = str(acc_num)
-                        break
-            except Exception:
-                pass
-
+        # Resolve target account ending in 48661 from environment variables
+        account_number = os.environ.get("ROBINHOOD_ACCOUNT_NUMBER")
         if not account_number:
             if os.environ.get("SKIP_LIVE_TRADES", "false").lower() == "true":
                 account_number = "MOCK_ACCOUNT_48661"
             else:
-                raise RuntimeError("Security Guardrail: Could not dynamically resolve Robinhood account ending in 48661.")
+                raise RuntimeError("Security Guardrail: ROBINHOOD_ACCOUNT_NUMBER environment variable is not set.")
+
+        if not account_number or not str(account_number).endswith("48661"):
+            raise RuntimeError(f"Security Guardrail: Unauthorized Robinhood account '{account_number}'. All operations restricted to accounts ending in 48661.")
 
         if "get_portfolio" in tools_dict:
             try:
                 port_res = await tools_dict["get_portfolio"].run_async(args={"account_number": account_number}, tool_context=None)
                 data = port_res.get("structuredContent", {}).get("data", {})
                 total_cash = float(data.get("cash", 100.0))
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"   [DEBUG ERROR] get_portfolio failed: {e}")
 
         if "get_equity_positions" in tools_dict:
             try:
@@ -468,8 +460,8 @@ async def execute_trading_decisions(
                                 "current_price": price,
                                 "equity": qty * price
                             })
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"   [DEBUG ERROR] get_equity_positions failed: {e}")
     except Exception as e:
         print(f"   Warning: Failed to fetch live portfolio state: {e}")
 
@@ -589,25 +581,16 @@ async def log_portfolio_snapshot(dataset_id: str = "portfolio_analytics") -> Non
         print(f"   Warning: Could not fetch MCP tools: {e}")
         return
 
-    # Redacted target account format: select account ending in 48661
-    account_number = None
-    if "get_accounts" in tools_dict:
-        try:
-            accounts_res = await tools_dict["get_accounts"].run_async(args={}, tool_context=None)
-            results = accounts_res.get("structuredContent", {}).get("data", {}).get("results", [])
-            for acc in results:
-                acc_num = acc.get("account_number")
-                if acc_num and str(acc_num).endswith("48661"):
-                    account_number = str(acc_num)
-                    break
-        except Exception:
-            pass
-
+    # Resolve target account ending in 48661 from environment variables
+    account_number = os.environ.get("ROBINHOOD_ACCOUNT_NUMBER")
     if not account_number:
         if os.environ.get("SKIP_LIVE_TRADES", "false").lower() == "true":
             account_number = "MOCK_ACCOUNT_48661"
         else:
-            raise RuntimeError("Security Guardrail: Could not dynamically resolve Robinhood account ending in 48661.")
+            raise RuntimeError("Security Guardrail: ROBINHOOD_ACCOUNT_NUMBER environment variable is not set.")
+
+    if not account_number or not str(account_number).endswith("48661"):
+        raise RuntimeError(f"Security Guardrail: Unauthorized Robinhood account '{account_number}'. All operations restricted to accounts ending in 48661.")
 
     # 2. Query portfolio metrics
     total_equity = 100.0
