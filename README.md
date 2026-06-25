@@ -34,7 +34,7 @@ graph TD
         BQ3
     end
     
-    BQ_Warehouse -->|Queries| Streamlit[Streamlit Dashboard]
+    Streamlit[Streamlit Dashboard] <--|Queries| BQ_Warehouse
 ```
 
 ---
