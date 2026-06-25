@@ -169,8 +169,8 @@ fig_gauge = go.Figure(go.Indicator(
             {'range': [0.2, 1.0], 'color': "#34C759"}    # Apple Vibrant Green
         ],
         'threshold': {
-            'line': {'color': "white", 'width': 4},
-            'thickness': 0.8,
+            'line': {'color': "white", 'width': 7},
+            'thickness': 1.0,
             'value': avg_sentiment
         }
     }
