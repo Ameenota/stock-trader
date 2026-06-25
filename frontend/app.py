@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 
 # 1. Page Configuration
 st.set_page_config(
-    page_title="AI Infrastructure Portfolio Dashboard",
+    page_title="Autonomous Stock Trader Dashboard",
     page_icon="📈",
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -135,7 +135,8 @@ def load_trade_history() -> pd.DataFrame:
         return pd.DataFrame()
 
 # 4. Main App Rendering
-st.title("AI Infrastructure Analyst Dashboard")
+st.title("Autonomous Stock Trader")
+st.markdown("<p style='font-size: 1.1rem; color: #a0a0b0; margin-top: -1.5rem; margin-bottom: 2rem;'><strong>Fully end-to-end:</strong> Ingests daily market news via yfinance, analyzes sentiment with Gemini, deterministically ranks conviction, and executes live orders on Robinhood using <strong>real $$$</strong>.</p>", unsafe_allow_html=True)
 
 # Load data
 snap = load_latest_snapshot()
