@@ -136,7 +136,7 @@ def load_trade_history() -> pd.DataFrame:
 
 # 4. Main App Rendering
 st.title("Autonomous Stock Trader")
-st.markdown("<p style='font-size: 1.1rem; color: #a0a0b0; margin-top: -1.5rem; margin-bottom: 2rem;'><strong>Fully end-to-end:</strong> Ingests daily market news via yfinance, analyzes sentiment with Gemini, deterministically ranks conviction, and executes live orders on Robinhood using <strong>real $$$</strong>.</p>", unsafe_allow_html=True)
+st.markdown("<p style='font-size: 1.1rem; color: #a0a0b0; margin-top: -1.5rem; margin-bottom: 2rem;'><strong>Fully end-to-end:</strong> Ingests daily market news via yfinance, analyzes sentiment with Gemini, deterministically ranks conviction, and executes live orders via <strong>MCP with Agentic Robinhood using real $$$</strong>.</p>", unsafe_allow_html=True)
 
 # Load data
 snap = load_latest_snapshot()
