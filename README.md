@@ -83,3 +83,8 @@ To complete your Kaggle Capstone Project submission, you must perform the follow
   Upload the demo video (to YouTube, Loom, or Drive) and replace `[Insert Link to Your Recorded Walkthrough Video Here]` at the top of this README.
 - [ ] **Post Submission Writeup on Kaggle**:
   Submit your Capstone write-up under the [Kaggle Capstone Project Discussion Forum](https://www.kaggle.com/competitions/5-day-ai-agents-intensive-vibecoding-course-with-google/discussion/709721) by creating a post containing this write-up, linking to this repository and your live dashboard URL.
+
+## 🔮 Future Improvements
+
+- [ ] **Additional Technical Indicators**: Integrate `pandas-ta` to calculate extra technical signals (like RSI or MACD) from the `yfinance` history, giving the Trading Agent more robust entry/exit timing data alongside sentiment scores.
+- [ ] **Dynamic Asset Screener**: Replace the hardcoded list of 10 AI stocks with an initial screening step where an agent dynamically finds the top trending tech/infrastructure stocks of the week.
