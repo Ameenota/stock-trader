@@ -29,7 +29,7 @@ st.markdown("""
     /* Title adjustments */
     h1 {
         font-weight: 700 !important;
-        background: linear-gradient(135deg, #6C5DD3 0%, #3F8CFF 100%);
+        background: linear-gradient(135deg, #2563eb 0%, #4f46e5 100%);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         margin-bottom: 2rem !important;
@@ -37,11 +37,11 @@ st.markdown("""
     
     /* Metrics panel decoration */
     div[data-testid="metric-container"] {
-        background-color: #1e1e24;
-        border: 1px solid #2e2e38;
+        background-color: #ffffff;
+        border: 1px solid #e2e8f0;
         padding: 1.5rem;
         border-radius: 12px;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        box-shadow: 0 4px 12px rgba(15, 23, 42, 0.04);
         transition: transform 0.2s;
     }
     div[data-testid="metric-container"]:hover {
@@ -51,7 +51,7 @@ st.markdown("""
     /* Custom divider line */
     hr {
         margin: 2.5rem 0 !important;
-        border-color: #2e2e38 !important;
+        border-color: #e2e8f0 !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -187,7 +187,7 @@ def get_logo_html(ticker: str) -> str:
 
 # 4. Main App Rendering
 st.title("Autonomous Stock Trader")
-st.markdown("<p style='font-size: 1.1rem; color: #a0a0b0; margin-top: -1.5rem; margin-bottom: 2rem;'><strong>Fully end-to-end:</strong> Ingests daily market news via yfinance, analyzes sentiment with Gemini, deterministically ranks conviction, and executes live orders via <strong>MCP with Agentic Robinhood using real $$$</strong>.</p>", unsafe_allow_html=True)
+st.markdown("<p style='font-size: 1.1rem; color: #475569; margin-top: -1.5rem; margin-bottom: 2rem;'><strong>Fully end-to-end:</strong> Ingests daily market news via yfinance, analyzes sentiment with Gemini, deterministically ranks conviction, and executes live orders via <strong>MCP with Agentic Robinhood using real $$$</strong>.</p>", unsafe_allow_html=True)
 
 # Load data
 snap = load_latest_snapshot()
@@ -200,16 +200,16 @@ if not recs_df.empty:
 else:
     avg_sentiment = 0.0
 
-st.markdown("<div style='text-align: center; font-size: 1.1rem; font-weight: 600; color: white; margin-top: -0.5rem; margin-bottom: -1rem;'>Market Sentiment (Agent Mood)</div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align: center; font-size: 1.1rem; font-weight: 600; color: #0f172a; margin-top: -0.5rem; margin-bottom: -1rem;'>Market Sentiment (Agent Mood)</div>", unsafe_allow_html=True)
 
 import plotly.graph_objects as go
 fig_gauge = go.Figure(go.Indicator(
     mode="gauge+number",
     value=avg_sentiment,
-    number={'font': {'size': 32, 'family': 'Outfit, sans-serif'}, 'valueformat': '.3f'},
+    number={'font': {'size': 32, 'color': '#0f172a', 'family': 'Outfit, sans-serif'}, 'valueformat': '.3f'},
     domain={'x': [0.25, 0.75], 'y': [0, 1]},
     gauge={
-        'axis': {'range': [-1.0, 1.0], 'tickwidth': 1, 'tickcolor': "white"},
+        'axis': {'range': [-1.0, 1.0], 'tickwidth': 1, 'tickcolor': "#475569"},
         'bar': {'color': "rgba(0,0,0,0)"},  # Transparent to let the pure steps colors pop
         'bgcolor': "rgba(0,0,0,0)",
         'borderwidth': 0,
@@ -219,7 +219,7 @@ fig_gauge = go.Figure(go.Indicator(
             {'range': [0.2, 1.0], 'color': "#34C759"}    # Apple Vibrant Green
         ],
         'threshold': {
-            'line': {'color': "white", 'width': 7},
+            'line': {'color': "#0f172a", 'width': 7},   # High-contrast deep slate pointer
             'thickness': 1.0,
             'value': avg_sentiment
         }
@@ -229,7 +229,7 @@ fig_gauge = go.Figure(go.Indicator(
 fig_gauge.update_layout(
     paper_bgcolor='rgba(0,0,0,0)',
     plot_bgcolor='rgba(0,0,0,0)',
-    font={'color': "white", 'family': "Outfit, sans-serif"},
+    font={'color': "#0f172a", 'family': "Outfit, sans-serif"},
     height=120,
     margin=dict(l=10, r=10, t=10, b=10)
 )
@@ -251,7 +251,7 @@ with col_right:
     else:
         time_ago = f"{int(diff_hours)} hours ago" if int(diff_hours) > 1 else "1 hour ago"
         
-    st.markdown(f"<div style='text-align: right; color: gray; font-size: 0.82rem; font-style: italic;'>Last Snapshot: {time_ago}</div>", unsafe_allow_html=True)
+    st.markdown(f"<div style='text-align: right; color: #475569; font-size: 0.82rem; font-style: italic;'>Last Snapshot: {time_ago}</div>", unsafe_allow_html=True)
 
 # Metrics & Allocation Panel
 m1, m2, m3, m4 = st.columns([1, 1, 1, 1.2])
@@ -297,28 +297,28 @@ with m4:
             width: 100%;
             border-collapse: collapse;
             font-size: 0.8rem;
-            color: #e0e0e0;
+            color: #0f172a;
             margin-top: 0.2rem;
         }
         .alloc-table th {
-            background-color: #1a1a20;
-            border-bottom: 2px solid #2e2e38;
+            background-color: #f1f5f9;
+            border-bottom: 2px solid #e2e8f0;
             padding: 4px 6px;
             text-align: left;
             font-weight: 600;
-            color: #a0a0b0;
+            color: #475569;
             font-size: 0.72rem;
         }
         .alloc-table td {
             padding: 6px;
-            border-bottom: 1px solid #2e2e38;
+            border-bottom: 1px solid #e2e8f0;
             vertical-align: middle;
         }
         .alloc-table tr:hover {
-            background-color: #16161c;
+            background-color: #f8fafc;
         }
     </style>
-    <div style='text-align: center; font-size: 0.75rem; font-weight: 600; color: gray; margin-bottom: 0.4rem; margin-top: -0.4rem;'>PORTFOLIO ALLOCATION</div>
+    <div style='text-align: center; font-size: 0.75rem; font-weight: 600; color: #475569; margin-bottom: 0.4rem; margin-top: -0.4rem;'>PORTFOLIO ALLOCATION</div>
     """, unsafe_allow_html=True)
 
     html_code = "<table class='alloc-table'><thead><tr><th>Asset</th><th>Value</th><th>Allocation</th></tr></thead><tbody>"
@@ -350,7 +350,7 @@ with m4:
             <td>
                 <div style='display: flex; align-items: center; justify-content: space-between;'>
                     <span style='font-weight: 600;'>{pct_str}</span>
-                    <div style='background-color: #2e2e38; border-radius: 3px; width: 40px; height: 6px; margin-left: 8px; overflow: hidden; flex-shrink: 0;'>
+                    <div style='background-color: #e2e8f0; border-radius: 3px; width: 40px; height: 6px; margin-left: 8px; overflow: hidden; flex-shrink: 0;'>
                         <div style='background-color: {color}; width: {pct}%; height: 100%; border-radius: 3px;'></div>
                     </div>
                 </div>
@@ -365,7 +365,7 @@ st.markdown("<hr/>", unsafe_allow_html=True)
 
 # 5. Latest Recommendations (Full Width Custom HTML Table)
 st.subheader("Daily AI Stock Recommendations")
-st.markdown("<p style='font-size: 0.85rem; color: #a0a0b0; margin-top: -0.8rem; margin-bottom: 1rem;'>We screen our 40-stock AI sector universe daily, filtering out stocks below their 50-day SMA and ranking the remainder by price momentum. The top 10 are fully analyzed by our sentiment agent using the latest 24h news to assign conviction scores (-1.0 to +1.0) and execution signals.</p>", unsafe_allow_html=True)
+st.markdown("<p style='font-size: 0.85rem; color: #475569; margin-top: -0.8rem; margin-bottom: 1rem;'>We screen our 40-stock AI sector universe daily, filtering out stocks below their 50-day SMA and ranking the remainder by price momentum. The top 10 are fully analyzed by our sentiment agent using the latest 24h news to assign conviction scores (-1.0 to +1.0) and execution signals.</p>", unsafe_allow_html=True)
 if not recs_df.empty:
     # Inject Custom Table CSS
     st.markdown("""
@@ -375,26 +375,26 @@ if not recs_df.empty:
             border-collapse: collapse;
             margin-top: 1rem;
             font-size: 0.85rem;
-            color: #e0e0e0;
+            color: #0f172a;
         }
         .rec-table th {
-            background-color: #1a1a20;
-            border-bottom: 2px solid #2e2e38;
+            background-color: #f1f5f9;
+            border-bottom: 2px solid #e2e8f0;
             padding: 10px;
             text-align: left;
             font-weight: 600;
-            color: #a0a0b0;
+            color: #475569;
         }
         .rec-table td {
             padding: 12px 10px;
-            border-bottom: 1px solid #2e2e38;
+            border-bottom: 1px solid #e2e8f0;
             vertical-align: top;
         }
         .rec-table tr:hover {
-            background-color: #16161c;
+            background-color: #f8fafc;
         }
         .ticker-link {
-            color: #3F8CFF;
+            color: #2563eb;
             text-decoration: none;
             font-weight: 600;
         }
@@ -403,7 +403,7 @@ if not recs_df.empty:
         }
         .thesis-text {
             font-size: 0.78rem;
-            color: #b0b0c0;
+            color: #475569;
             line-height: 1.45;
             white-space: normal;
             word-break: break-word;
@@ -416,16 +416,16 @@ if not recs_df.empty:
             display: inline-block;
         }
         .signal-buy {
-            background-color: rgba(0, 198, 137, 0.15);
-            color: #00C689;
+            background-color: rgba(34, 197, 94, 0.15);
+            color: #15803d;
         }
         .signal-liquidate {
-            background-color: rgba(255, 76, 97, 0.15);
-            color: #FF4C61;
+            background-color: rgba(239, 68, 68, 0.15);
+            color: #b91c1c;
         }
         .signal-hold {
-            background-color: rgba(255, 162, 107, 0.15);
-            color: #FFA26B;
+            background-color: rgba(245, 158, 11, 0.15);
+            color: #b45309;
         }
     </style>
     """, unsafe_allow_html=True)
@@ -487,7 +487,7 @@ st.markdown("<hr/>", unsafe_allow_html=True)
 
 # 6. Paginated & Filterable Trade History
 st.subheader("Executed Trade History Log")
-st.markdown("<p style='font-size: 0.85rem; color: #a0a0b0; margin-top: -0.8rem; margin-bottom: 1.2rem;'>This log displays live execution receipts performed by the trading agent on Robinhood via Model Context Protocol (MCP) tool calls, including detailed justifications logged directly from the agent's execution loop.</p>", unsafe_allow_html=True)
+st.markdown("<p style='font-size: 0.85rem; color: #475569; margin-top: -0.8rem; margin-bottom: 1.2rem;'>This log displays live execution receipts performed by the trading agent on Robinhood via Model Context Protocol (MCP) tool calls, including detailed justifications logged directly from the agent's execution loop.</p>", unsafe_allow_html=True)
 
 if not trades_df.empty:
     # Checkbox to toggle simulated / dry-runs (default off)
