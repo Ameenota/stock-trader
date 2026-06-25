@@ -666,11 +666,11 @@ with st.expander("📈 Daily AI Stock Recommendations", expanded=True):
         <thead>
             <tr>
                 <th style='width: 10%'>Ticker</th>
-                <th style='width: 12%'>Sentiment</th>
-                <th style='width: 8%'>Rank</th>
-                <th style='width: 14%'>Signal</th>
+                <th style='width: 14%'>News Sentiment</th>
+                <th style='width: 10%'>News Rank</th>
+                <th style='width: 12%'>Signal</th>
                 <th style='width: 12%'>Price</th>
-                <th style='width: 14%'>Consensus</th>
+                <th style='width: 12%'>Consensus</th>
                 <th style='width: 30%'>Thesis</th>
             </tr>
         </thead>

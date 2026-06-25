@@ -60,6 +60,7 @@ async def run_pipeline(dataset_id: str = "portfolio_analytics") -> None:
     skip_ingestion = os.environ.get("SKIP_INGESTION", "false").lower() == "true"
     
     ranked_portfolio = []
+    graveyard_rows = None
     
     if skip_ingestion:
         print("\n[SKIP_INGESTION] Checking BigQuery for today's market metrics...")
@@ -73,17 +74,21 @@ async def run_pipeline(dataset_id: str = "portfolio_analytics") -> None:
 
     if not skip_ingestion:
         # Run daily analysis pipeline helper from app.agent
-        print("\nRunning daily analysis pipeline (ingestion, sentiment analysis, ranking, BigQuery logging)...")
-        ranked_portfolio = await run_daily_analysis_pipeline(dataset_id=dataset_id)
-        print("   Daily analysis pipeline finished and results logged.")
-
-    # Print daily metrics table
-    print_portfolio_table(ranked_portfolio)
+        print("\nRunning daily analysis pipeline (ingestion, sentiment analysis, ranking)...")
+        ranked_portfolio, graveyard_rows = await run_daily_analysis_pipeline(dataset_id=dataset_id)
+        print("   Daily analysis pipeline finished (metrics gathered).")
 
     # Run trading agent for portfolio execution and rebalancing
     print("\nExecuting trading decisions...")
-    await execute_trading_decisions(ranked_portfolio, dataset_id=dataset_id)
-    print("   Portfolio execution completed.")
+    final_portfolio = await execute_trading_decisions(
+        ranked_portfolio=ranked_portfolio,
+        graveyard_rows=graveyard_rows,
+        dataset_id=dataset_id
+    )
+    print("   Portfolio execution completed and logged.")
+
+    # Print final portfolio table (now with Trading Agent signals & theses!)
+    print_portfolio_table(final_portfolio)
 
 if __name__ == "__main__":
     asyncio.run(run_pipeline())

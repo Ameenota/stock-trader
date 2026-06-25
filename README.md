@@ -145,3 +145,5 @@ To complete your Kaggle Capstone Project submission, you must perform the follow
   * *Implementation*: Enforced via **Rule 10** in `TRADING_AGENT_INSTRUCTION` inside [agent.py](file:///Users/sagar/Documents/ML/stock-trader/agent/app/agent.py), forcing the execution agent to check that the score delta is strictly greater than 0.3 before trading.
 - [ ] **Minimum Holding Period**: Enforce a minimum holding time of 3-5 trading days for newly purchased assets before they can be sold, protecting the portfolio from day-to-day news noise (except during extreme bearish signals < -0.5).
 
+*  # Redacted target account format: select account ending in 48661
+        account_number = "XXXXX48661"  # Default fallback.. is this safe?

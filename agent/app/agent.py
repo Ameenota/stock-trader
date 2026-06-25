@@ -139,7 +139,67 @@ Our rules:
    - Be cautious of buying/increasing positions in assets with RSI > 70 (overbought condition).
    - Look for entry/buying signals when RSI is near or below 30 (oversold condition).
    - Use MACD crossovers (e.g., macd crossing above macd_signal is a bullish signal; macd crossing below macd_signal is a bearish signal) to confirm trend momentum shifts.
-10. **Hysteresis & Swap Buffer**: To prevent marginal churn (frequent, inefficient trading of assets for minor conviction gains), you must strictly enforce a swap threshold. You are only allowed to sell/liquidate an existing holding to buy a new candidate asset if the new candidate's conviction score (`raw_score` in today's metrics log) is at least **0.3 higher** than the score of the asset you are replacing (i.e. `new_candidate.raw_score - existing_holding.raw_score > 0.3`). If the delta is 0.3 or less, keep holding the existing asset instead of swapping. This hysteresis rule does not apply when liquidating an asset that has a direct negative sentiment or liquidation signal, or when deploying idle cash."""
+10. **Hysteresis & Swap Buffer**: To prevent marginal churn (frequent, inefficient trading of assets for minor conviction gains), you must strictly enforce a swap threshold. You are only allowed to sell/liquidate an existing holding to buy a new candidate asset if the new candidate's conviction score (`raw_score` in today's metrics log) is at least **0.3 higher** than the score of the asset you are replacing (i.e. `new_candidate.raw_score - existing_holding.raw_score > 0.3`). If the delta is 0.3 or less, keep holding the existing asset instead of swapping. This hysteresis rule does not apply when liquidating an asset that has a direct negative sentiment or liquidation signal, or when deploying idle cash.
+11. **Final Decision Logging**: Once you have completed all analysis and trade execution, you MUST call the `log_trading_decisions` tool exactly once to log your final signals and theses for all 10 assets. Do not finish your run without calling this tool. Each decision in the list must specify the 'ticker', 'signal' (STRONG BUY, HOLD, or LIQUIDATE), and a concise 'thesis' (max 2 sentences). The 'thesis' MUST start by explicitly referencing the news sentiment rank and score from today's watchlist (e.g. 'Ranked #3 on news sentiment with a 0.80 score...'), and then justify your final signal using technical metrics (RSI, MACD, 50-day SMA, etc.) and portfolio execution rules (such as the 0.3 hysteresis buffer or overbought/oversold levels)."""
+
+
+LAST_TRADING_DECISIONS = []
+
+def log_trading_decisions(decisions, tool_context: ToolContext) -> str:
+    """Logs the final signal and thesis decisions made by you for all 10 assets on the watchlist.
+    
+    Args:
+        decisions: A list of dicts, where each dict has:
+                   - 'ticker': str (e.g., 'TSM')
+                   - 'signal': str ('STRONG BUY', 'HOLD', or 'LIQUIDATE')
+                   - 'thesis': str (unified news + technical thesis starting with news rank/sentiment, then technical overlay/hysteresis explanation)
+    """
+    print(f"\n[TOOL CALL] log_trading_decisions called with: {decisions}")
+    global LAST_TRADING_DECISIONS
+    
+    # Handle single string input representing the entire list
+    if isinstance(decisions, str):
+        import ast
+        try:
+            decisions = ast.literal_eval(decisions)
+        except Exception:
+            import json
+            try:
+                decisions = json.loads(decisions)
+            except Exception:
+                pass
+
+    if not isinstance(decisions, list):
+        return "Error: decisions must be a list of dictionaries."
+
+    parsed_decisions = []
+    for d in decisions:
+        if isinstance(d, dict):
+            parsed_decisions.append(d)
+        elif isinstance(d, str):
+            import ast
+            try:
+                # ast.literal_eval handles python dict string representations with single quotes
+                parsed = ast.literal_eval(d)
+                if isinstance(parsed, dict):
+                    parsed_decisions.append(parsed)
+            except Exception:
+                import json
+                try:
+                    parsed = json.loads(d)
+                    if isinstance(parsed, dict):
+                        parsed_decisions.append(parsed)
+                except Exception:
+                    pass
+        else:
+            try:
+                parsed_decisions.append(dict(d))
+            except Exception:
+                pass
+
+    LAST_TRADING_DECISIONS = parsed_decisions
+    tool_context.session.state["trading_decisions"] = parsed_decisions
+    return f"Successfully logged final decisions for {len(parsed_decisions)} assets."
 
 
 async def validate_and_intercept_trades(tool, args, tool_context) -> dict | None:
@@ -204,7 +264,7 @@ trading_agent = Agent(
         retry_options=types.HttpRetryOptions(attempts=3),
     ),
     instruction=TRADING_AGENT_INSTRUCTION,
-    tools=[robinhood_toolset, insert_trade_record],
+    tools=[robinhood_toolset, insert_trade_record, log_trading_decisions],
     before_tool_callback=validate_and_intercept_trades,
 )
 
@@ -316,15 +376,18 @@ async def run_daily_analysis_pipeline(dataset_id: str = "portfolio_analytics") -
     except Exception as e:
         print(f"   Warning: Failed to ingest SPY: {e}")
 
-    # 7. Log all decisions (10 active + 30 graveyard + 1 benchmark) to BigQuery
-    all_rows_to_log = list(ranked_portfolio) + graveyard_rows
-    insert_sentiment(all_rows_to_log, dataset_id=dataset_id)
-
-    return ranked_portfolio
+    # Return both ranked portfolio and graveyard rows to the orchestrator to log after execution
+    return ranked_portfolio, graveyard_rows
 
 
-async def execute_trading_decisions(ranked_portfolio: list, dataset_id: str = "portfolio_analytics") -> None:
-    """Queries weekly metrics history and triggers trading_agent to execute trades on Robinhood."""
+async def execute_trading_decisions(
+    ranked_portfolio: list, 
+    graveyard_rows: list | None = None, 
+    dataset_id: str = "portfolio_analytics"
+) -> list:
+    """Queries weekly metrics history, runs the trading_agent to execute trades, updates the portfolio with its thesis/signals, and logs to BQ."""
+    global LAST_TRADING_DECISIONS
+    LAST_TRADING_DECISIONS = []
     from app.tools.bigquery_service import get_historical_metrics
 
     # 1. Fetch weekly historical signals log
@@ -345,7 +408,7 @@ async def execute_trading_decisions(ranked_portfolio: list, dataset_id: str = "p
         tools_dict = {t.name: t for t in tools}
         
         # Redacted target account format: select account ending in 48661
-        account_number = "ROBINHOOD_ACCOUNT_NUMBER"  # Default fallback
+        account_number = None
         if "get_accounts" in tools_dict:
             try:
                 accounts_res = await tools_dict["get_accounts"].run_async(args={}, tool_context=None)
@@ -357,6 +420,12 @@ async def execute_trading_decisions(ranked_portfolio: list, dataset_id: str = "p
                         break
             except Exception:
                 pass
+
+        if not account_number:
+            if os.environ.get("SKIP_LIVE_TRADES", "false").lower() == "true":
+                account_number = "MOCK_ACCOUNT_48661"
+            else:
+                raise RuntimeError("Security Guardrail: Could not dynamically resolve Robinhood account ending in 48661.")
 
         if "get_portfolio" in tools_dict:
             try:
@@ -417,7 +486,10 @@ Here is your current starting Robinhood portfolio state:
 - Available Cash (Buying Power): ${total_cash:.2f}
 - Current Holdings (List of positions): {holdings}
 
-Here is the historical metrics log for all 10 assets over the past week:
+Here is today's active watch list with news sentiment rankings, scores, and technical indicators. (Refer to this log to populate your output schema):
+{ranked_portfolio}
+
+Here is the historical metrics log for all 10 assets over the past week (excluding today):
 {weekly_metrics}"""
 
     message = types.Content(
@@ -446,6 +518,61 @@ Here is the historical metrics log for all 10 assets over the past week:
     except Exception as e:
         print(f"   Warning: Failed to log portfolio snapshot: {e}")
 
+    # 4. Extract structured Trading Agent results and update today's ranked portfolio
+    try:
+        decisions = LAST_TRADING_DECISIONS
+        
+        # If the agent forgot to call the log tool, prompt it explicitly to do so
+        if not decisions:
+            print("\n[RETRY] Agent did not call log_trading_decisions. Prompting agent to finalize...")
+            message_retry = types.Content(
+                role="user",
+                parts=[types.Part.from_text(text="You did not call the log_trading_decisions tool. Please call log_trading_decisions now with the final signals and theses for all 10 assets to finalize today's run.")]
+            )
+            async for event in runner.run_async(
+                new_message=message_retry,
+                user_id="cron_job",
+                session_id=session.id,
+            ):
+                if event.content and event.content.parts:
+                    for part in event.content.parts:
+                        if part.text:
+                            print(part.text, end="", flush=True)
+            
+            decisions = LAST_TRADING_DECISIONS
+
+        print(f"\n[DEBUG] execute_trading_decisions retrieved decisions: {decisions}")
+        if decisions:
+            decision_map = {}
+            for d in decisions:
+                ticker = d.get("ticker", "").strip().upper() if isinstance(d, dict) else getattr(d, "ticker", "").strip().upper()
+                signal = d.get("signal", "HOLD").strip().upper() if isinstance(d, dict) else getattr(d, "signal", "HOLD").strip().upper()
+                thesis = d.get("thesis", "") if isinstance(d, dict) else getattr(d, "thesis", "")
+                if ticker:
+                    decision_map[ticker] = {"signal": signal, "thesis": thesis}
+
+            # Map signals back to portfolio
+            for item in ranked_portfolio:
+                ticker = item["ticker"].strip().upper()
+                if ticker in decision_map:
+                    item["signal"] = decision_map[ticker]["signal"]
+                    item["thesis"] = decision_map[ticker]["thesis"]
+    except Exception as e:
+        print(f"   Warning: Failed to extract structured Trading Agent decisions: {e}")
+
+    # 5. Log final unified results (10 active + 30 graveyard + 1 benchmark) to BigQuery if graveyard_rows are provided
+    if graveyard_rows is not None:
+        print("\nLogging final signals and unified theses to BigQuery...")
+        try:
+            from app.tools.bigquery_service import insert_sentiment
+            all_rows_to_log = list(ranked_portfolio) + list(graveyard_rows)
+            insert_sentiment(all_rows_to_log, dataset_id=dataset_id)
+            print("   Unified market metrics and execution logs written to BigQuery successfully.")
+        except Exception as e:
+            print(f"   Warning: Failed to write unified metrics to BigQuery: {e}")
+
+    return ranked_portfolio
+
 
 async def log_portfolio_snapshot(dataset_id: str = "portfolio_analytics") -> None:
     """Queries Robinhood MCP tools for current equity, cash, and holdings,
@@ -463,7 +590,7 @@ async def log_portfolio_snapshot(dataset_id: str = "portfolio_analytics") -> Non
         return
 
     # Redacted target account format: select account ending in 48661
-    account_number = "ROBINHOOD_ACCOUNT_NUMBER"  # Default fallback, will search list
+    account_number = None
     if "get_accounts" in tools_dict:
         try:
             accounts_res = await tools_dict["get_accounts"].run_async(args={}, tool_context=None)
@@ -475,6 +602,12 @@ async def log_portfolio_snapshot(dataset_id: str = "portfolio_analytics") -> Non
                     break
         except Exception:
             pass
+
+    if not account_number:
+        if os.environ.get("SKIP_LIVE_TRADES", "false").lower() == "true":
+            account_number = "MOCK_ACCOUNT_48661"
+        else:
+            raise RuntimeError("Security Guardrail: Could not dynamically resolve Robinhood account ending in 48661.")
 
     # 2. Query portfolio metrics
     total_equity = 100.0
