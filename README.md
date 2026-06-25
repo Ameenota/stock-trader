@@ -28,13 +28,13 @@ graph TD
     TA -->|Log Decisions| BQ2[(BigQuery: trade_history)]
     Snapshot -->|Log holdings & cash| BQ3[(BigQuery: portfolio_snapshot)]
     
-    subgraph BigQuery Data Warehouse
+    subgraph BQ_Warehouse ["BigQuery Data Warehouse"]
         BQ1
         BQ2
         BQ3
     end
     
-    BigQuery Data Warehouse -->|Queries| Streamlit[Streamlit Dashboard]
+    BQ_Warehouse -->|Queries| Streamlit[Streamlit Dashboard]
 ```
 
 ---
