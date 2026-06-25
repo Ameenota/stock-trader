@@ -138,7 +138,8 @@ Our rules:
 9. Utilize Technical Indicators (rsi, macd, macd_signal) to improve trade execution timing:
    - Be cautious of buying/increasing positions in assets with RSI > 70 (overbought condition).
    - Look for entry/buying signals when RSI is near or below 30 (oversold condition).
-   - Use MACD crossovers (e.g., macd crossing above macd_signal is a bullish signal; macd crossing below macd_signal is a bearish signal) to confirm trend momentum shifts. """
+   - Use MACD crossovers (e.g., macd crossing above macd_signal is a bullish signal; macd crossing below macd_signal is a bearish signal) to confirm trend momentum shifts.
+10. **Hysteresis & Swap Buffer**: To prevent marginal churn (frequent, inefficient trading of assets for minor conviction gains), you must strictly enforce a swap threshold. You are only allowed to sell/liquidate an existing holding to buy a new candidate asset if the new candidate's conviction score (`raw_score` in today's metrics log) is at least **0.3 higher** than the score of the asset you are replacing (i.e. `new_candidate.raw_score - existing_holding.raw_score > 0.3`). If the delta is 0.3 or less, keep holding the existing asset instead of swapping. This hysteresis rule does not apply when liquidating an asset that has a direct negative sentiment or liquidation signal, or when deploying idle cash."""
 
 
 async def validate_and_intercept_trades(tool, args, tool_context) -> dict | None:
