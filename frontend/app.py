@@ -6,6 +6,7 @@ import json
 import pandas as pd
 import streamlit as st
 import plotly.express as px
+import yfinance as yf
 from google.cloud import bigquery
 from datetime import datetime, timezone
 
@@ -188,6 +189,38 @@ def load_trade_history() -> pd.DataFrame:
         st.error(f"Error loading trade history: {e}")
         return pd.DataFrame()
 
+def load_portfolio_history() -> pd.DataFrame:
+    """Loads the history of portfolio total equity from BigQuery, returning the latest entry per day."""
+    query = f"""
+        SELECT DATE(timestamp) as date, total_equity
+        FROM `{project}.{dataset_id}.portfolio_snapshot`
+        QUALIFY ROW_NUMBER() OVER(PARTITION BY DATE(timestamp) ORDER BY timestamp DESC) = 1
+        ORDER BY date ASC
+    """
+    try:
+        df = client.query(query).to_dataframe()
+        # Ensure the date column is parsed correctly as date objects
+        if not df.empty:
+            df['date'] = pd.to_datetime(df['date']).dt.date
+        return df
+    except Exception as e:
+        st.error(f"Error loading portfolio history: {e}")
+        return pd.DataFrame()
+
+@st.cache_data(ttl=3600)
+def fetch_spy_history(start_str: str, end_str: str) -> pd.DataFrame:
+    """Fetches daily SPY closing prices from yfinance for the specified range, cached for 1 hour."""
+    try:
+        spy = yf.Ticker("SPY")
+        spy_hist = spy.history(start=start_str, end=end_str)
+        if not spy_hist.empty:
+            spy_hist = spy_hist.reset_index()
+            spy_hist['date'] = pd.to_datetime(spy_hist['Date']).dt.date
+            return spy_hist[['date', 'Close']].rename(columns={'Close': 'SPY'})
+    except Exception:
+        pass
+    return pd.DataFrame()
+
 # Company Logo domain mapping and helper
 TICKER_DOMAINS = {
     "NVDA": "nvidia.com",
@@ -273,46 +306,131 @@ graveyard_df = load_latest_graveyard()
 trades_df = load_trade_history()
 headlines = load_latest_news_headlines()
 
-# Calculate average sentiment and render gauge chart
+# Calculate average sentiment and render columns
 if not recs_df.empty:
     avg_sentiment = float(recs_df["raw_score"].mean())
 else:
     avg_sentiment = 0.0
 
-st.markdown("<div style='text-align: center; font-size: 1.1rem; font-weight: 600; color: #0f172a; margin-top: -0.5rem; margin-bottom: -1rem;'>Market Sentiment (Agent Mood)</div>", unsafe_allow_html=True)
+col_gauge, col_perf = st.columns([1.5, 2.5])
 
-import plotly.graph_objects as go
-fig_gauge = go.Figure(go.Indicator(
-    mode="gauge+number",
-    value=avg_sentiment,
-    number={'font': {'size': 32, 'color': '#0f172a', 'family': 'Outfit, sans-serif'}, 'valueformat': '.3f'},
-    domain={'x': [0.25, 0.75], 'y': [0, 1]},
-    gauge={
-        'axis': {'range': [-1.0, 1.0], 'tickwidth': 1, 'tickcolor': "#475569"},
-        'bar': {'color': "rgba(0,0,0,0)"},  # Transparent to let the pure steps colors pop
-        'bgcolor': "rgba(0,0,0,0)",
-        'borderwidth': 0,
-        'steps': [
-            {'range': [-1.0, -0.2], 'color': "#FF3B30"},  # Apple Vibrant Red
-            {'range': [-0.2, 0.2], 'color': "#FFCC00"},   # Apple Vibrant Yellow
-            {'range': [0.2, 1.0], 'color': "#34C759"}    # Apple Vibrant Green
-        ],
-        'threshold': {
-            'line': {'color': "#0f172a", 'width': 7},   # High-contrast deep slate pointer
-            'thickness': 1.0,
-            'value': avg_sentiment
+with col_gauge:
+    st.markdown("<div style='text-align: center; font-size: 1.05rem; font-weight: 600; color: #0f172a; margin-top: 0.5rem; margin-bottom: -1rem;'>Market Sentiment (Agent Mood)</div>", unsafe_allow_html=True)
+    
+    import plotly.graph_objects as go
+    fig_gauge = go.Figure(go.Indicator(
+        mode="gauge+number",
+        value=avg_sentiment,
+        number={'font': {'size': 32, 'color': '#0f172a', 'family': 'Outfit, sans-serif'}, 'valueformat': '.3f'},
+        domain={'x': [0.25, 0.75], 'y': [0, 1]},
+        gauge={
+            'axis': {'range': [-1.0, 1.0], 'tickwidth': 1, 'tickcolor': "#475569"},
+            'bar': {'color': "rgba(0,0,0,0)"},  # Transparent to let the pure steps colors pop
+            'bgcolor': "rgba(0,0,0,0)",
+            'borderwidth': 0,
+            'steps': [
+                {'range': [-1.0, -0.2], 'color': "#FF3B30"},  # Apple Vibrant Red
+                {'range': [-0.2, 0.2], 'color': "#FFCC00"},   # Apple Vibrant Yellow
+                {'range': [0.2, 1.0], 'color': "#34C759"}    # Apple Vibrant Green
+            ],
+            'threshold': {
+                'line': {'color': "#0f172a", 'width': 7},   # High-contrast deep slate pointer
+                'thickness': 1.0,
+                'value': avg_sentiment
+            }
         }
-    }
-))
+    ))
+    
+    fig_gauge.update_layout(
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        font={'color': "#0f172a", 'family': "Outfit, sans-serif"},
+        height=120,
+        margin=dict(l=10, r=10, t=10, b=10)
+    )
+    st.plotly_chart(fig_gauge, use_container_width=True)
 
-fig_gauge.update_layout(
-    paper_bgcolor='rgba(0,0,0,0)',
-    plot_bgcolor='rgba(0,0,0,0)',
-    font={'color': "#0f172a", 'family': "Outfit, sans-serif"},
-    height=120,
-    margin=dict(l=10, r=10, t=10, b=10)
-)
-st.plotly_chart(fig_gauge, use_container_width=True)
+with col_perf:
+    # 1. Load portfolio total value history from BigQuery (cached & daily-deduplicated)
+    df_daily = load_portfolio_history()
+    
+    if df_daily.empty or len(df_daily) < 1:
+        st.markdown("<div style='text-align: center; color: #475569; font-size: 0.9rem; margin-top: 2.5rem;'>Performance history comparison will populate once snapshots are logged.</div>", unsafe_allow_html=True)
+    else:
+        # Force a 7-day lookback range for daily visualization
+        from datetime import datetime, timezone, timedelta
+        end_date = datetime.now(timezone.utc).date()
+        start_date = end_date - timedelta(days=6) # 7 days total (today + 6 days back)
+        
+        # Download S&P 500 (SPY) for the same range (cached)
+        try:
+            start_str = start_date.strftime("%Y-%m-%d")
+            end_str = (end_date + timedelta(days=2)).strftime("%Y-%m-%d")
+            
+            spy_df = fetch_spy_history(start_str, end_str)
+            
+            if not spy_df.empty:
+                # Create a date backbone of all 7 days in the range
+                date_range = [start_date + timedelta(days=i) for i in range(7)]
+                backbone_df = pd.DataFrame({'date': date_range})
+                
+                # Merge backbone with portfolio and spy
+                merged = pd.merge(backbone_df, df_daily, on='date', how='left')
+                merged = pd.merge(merged, spy_df, on='date', how='left')
+                
+                # Forward-fill / backward-fill SPY prices to cover weekends/holidays
+                merged['SPY'] = merged['SPY'].ffill().bfill()
+                
+                # Filter out any dates before the first portfolio snapshot date
+                # to make sure the benchmark comparison starts exactly on the first portfolio day
+                first_portfolio_row = merged[merged['total_equity'].notnull()]
+                if not first_portfolio_row.empty:
+                    first_valid_date = first_portfolio_row['date'].iloc[0]
+                    merged = merged[merged['date'] >= first_valid_date].copy()
+                
+                # Calculate base-100 return starting on the first valid portfolio snapshot day
+                merged_valid = merged.dropna(subset=['total_equity']).copy()
+                
+                if not merged_valid.empty:
+                    first_equity = merged_valid['total_equity'].iloc[0]
+                    first_spy = merged_valid['SPY'].iloc[0]
+                    
+                    merged['Agent Portfolio'] = (merged['total_equity'] / first_equity) * 100 if first_equity > 0 else 100.0
+                    merged['S&P 500 (SPY)'] = (merged['SPY'] / first_spy) * 100 if first_spy > 0 else 100.0
+                else:
+                    merged['Agent Portfolio'] = pd.Series(dtype='float64')
+                    merged['S&P 500 (SPY)'] = pd.Series(dtype='float64')
+                
+                # Melt for plotting
+                plot_df = merged.melt(id_vars=['date'], value_vars=['Agent Portfolio', 'S&P 500 (SPY)'], var_name='Metric', value_name='Normalized Value')
+                
+                # Line chart
+                fig_line = px.line(
+                    plot_df,
+                    x='date',
+                    y='Normalized Value',
+                    color='Metric',
+                    color_discrete_map={
+                        'Agent Portfolio': '#2563eb',
+                        'S&P 500 (SPY)': '#94a3b8'
+                    }
+                )
+                
+                fig_line.update_layout(
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    font={'color': "#0f172a", 'family': "Outfit, sans-serif"},
+                    height=140,
+                    margin=dict(l=10, r=10, t=10, b=10),
+                    xaxis=dict(showgrid=True, gridcolor='#f1f5f9', title="", type='date', dtick="D1", tickformat="%b %d"),
+                    yaxis=dict(showgrid=True, gridcolor='#f1f5f9', title="Normalized Return"),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1)
+                )
+                st.plotly_chart(fig_line, use_container_width=True)
+            else:
+                st.markdown("<div style='text-align: center; color: #475569; font-size: 0.9rem; margin-top: 2.5rem;'>Benchmark data unavailable (empty history).</div>", unsafe_allow_html=True)
+        except Exception as e:
+            st.markdown(f"<div style='text-align: center; color: #ef4444; font-size: 0.9rem; margin-top: 2.5rem;'>Error loading S&P 500 comparison: {e}</div>", unsafe_allow_html=True)
 
 # Header details
 col_left, col_right = st.columns(2)
@@ -347,12 +465,12 @@ with m2:
     )
 with m3:
     gain_loss = snap['unrealized_gain_loss']
-    gain_loss_prefix = "+" if gain_loss >= 0 else ""
+    val_sign = "" if gain_loss >= 0 else "-"
+    delta_sign = "+" if gain_loss >= 0 else "-"
     st.metric(
         label="Unrealized Gain / Loss",
-        value=f"{gain_loss_prefix}${gain_loss:.2f}",
-        delta=f"{gain_loss_prefix}${gain_loss:.2f} total",
-        delta_color="normal" if gain_loss >= 0 else "inverse"
+        value=f"{val_sign}${abs(gain_loss):.2f}",
+        delta=f"{delta_sign}${abs(gain_loss):.2f} total"
     )
 with m4:
     holdings_list = snap["holdings"]

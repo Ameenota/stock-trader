@@ -359,6 +359,7 @@ def get_historical_metrics(
         FROM `{table_id}`
         WHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @days DAY)
           AND signal != 'FILTERED'
+          AND ticker != 'SPY'
         ORDER BY ticker, timestamp ASC
     """
     

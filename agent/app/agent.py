@@ -290,7 +290,33 @@ async def run_daily_analysis_pipeline(dataset_id: str = "portfolio_analytics") -
                 "macd_signal": None
             })
 
-    # 6. Log all decisions (10 active + 30 graveyard) to BigQuery
+    # 6. Ingest and log SPY benchmark data
+    try:
+        spy_data = ingest_market_data(tickers=["SPY"])
+        spy_price = spy_data.get("SPY", {}).get("current_price")
+        if spy_price:
+            print(f"   Successfully ingested SPY benchmark price: ${spy_price:.2f}")
+            graveyard_rows.append({
+                "ticker": "SPY",
+                "raw_score": 0.0,
+                "thesis": "S&P 500 Index Benchmark",
+                "relative_rank": 0,
+                "signal": "BENCHMARK",
+                "timestamp": current_time_str,
+                "raw_news": "[]",
+                "analyst_consensus": "N/A",
+                "target_price": None,
+                "current_price": spy_price,
+                "moving_average_20d": None,
+                "price_to_ma_ratio": None,
+                "rsi": None,
+                "macd": None,
+                "macd_signal": None
+            })
+    except Exception as e:
+        print(f"   Warning: Failed to ingest SPY: {e}")
+
+    # 7. Log all decisions (10 active + 30 graveyard + 1 benchmark) to BigQuery
     all_rows_to_log = list(ranked_portfolio) + graveyard_rows
     insert_sentiment(all_rows_to_log, dataset_id=dataset_id)
 
