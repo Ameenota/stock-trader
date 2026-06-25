@@ -154,8 +154,9 @@ import plotly.graph_objects as go
 fig_gauge = go.Figure(go.Indicator(
     mode="gauge+number",
     value=avg_sentiment,
-    domain={'x': [0, 1], 'y': [0, 1]},
-    title={'text': "Market Sentiment (Agent Mood)", 'font': {'size': 18, 'color': 'white'}},
+    number={'font': {'size': 32, 'family': 'Outfit, sans-serif'}, 'valueformat': '.3f'},
+    domain={'x': [0.25, 0.75], 'y': [0, 1]},
+    title={'text': "Market Sentiment (Agent Mood)", 'font': {'size': 15, 'color': 'white', 'family': 'Outfit, sans-serif'}},
     gauge={
         'axis': {'range': [-1.0, 1.0], 'tickwidth': 1, 'tickcolor': "white"},
         'bar': {'color': "rgba(0,0,0,0)"},  # Transparent to let the pure steps colors pop
@@ -177,9 +178,9 @@ fig_gauge = go.Figure(go.Indicator(
 fig_gauge.update_layout(
     paper_bgcolor='rgba(0,0,0,0)',
     plot_bgcolor='rgba(0,0,0,0)',
-    font={'color': "white"},
-    height=200,
-    margin=dict(l=20, r=20, t=50, b=20)
+    font={'color': "white", 'family': "Outfit, sans-serif"},
+    height=140,
+    margin=dict(l=10, r=10, t=35, b=10)
 )
 st.plotly_chart(fig_gauge, use_container_width=True)
 
