@@ -447,3 +447,34 @@ def get_latest_market_metrics(
         })
         
     return metrics
+
+
+def get_latest_portfolio_holdings(dataset_id: str = "portfolio_analytics") -> List[str]:
+    """Queries BigQuery and returns the list of stock symbols currently owned.
+
+    Queries the most recent portfolio snapshot and parses the holdings JSON.
+    """
+    import json
+    client = get_bigquery_client()
+    table_id = f"{client.project}.{dataset_id}.portfolio_snapshot"
+
+    query = f"""
+        SELECT holdings
+        FROM `{table_id}`
+        ORDER BY timestamp DESC
+        LIMIT 1
+    """
+    try:
+        query_job = client.query(query)
+        results = list(query_job.result())
+        if results:
+            row = results[0]
+            holdings_str = row.get("holdings")
+            if holdings_str:
+                holdings = json.loads(holdings_str)
+                return [h.get("symbol") for h in holdings if h.get("shares", 0) > 0]
+    except Exception:
+        # Fallback to empty list if dataset/table does not exist or query fails
+        pass
+
+    return []

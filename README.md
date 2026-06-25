@@ -57,11 +57,55 @@ graph TD
 
 ---
 
-## 🚦 Architectural Constraints
-* **Asset Universe**: I strictly limited to **10 assets** (9 AI infrastructure stocks: NVDA, AMD, TSM, MU, SMCI, DELL, VRT, ETN, CEG + 1 Treasury hedge: TLT). The hedge is only used when all AI stocks are down.
+## 🚦 Architectural Constraints & Asset Screener
+* **Allowed Ticker Universe**: Restricts trade execution to a centralized **40-stock universe** of liquid, large-cap AI core (NVDA, AMD, AVGO), chip foundry/memory (TSM, MU, ASML), cloud providers (MSFT, GOOGL, AMZN), grid power utilities (CEG, VST, ETN), and enterprise AI software/security (PLTR, CRWD) stocks.
+* **Dynamic Active Watchlist**: A python-based pre-screener dynamically constructs the daily active list of 10 tickers from the 40-stock universe:
+  1. It fetches current portfolio holdings from BigQuery and forces them to be on the watchlist so they are monitored for hold/sell decisions.
+  2. It downloads price history for candidates and filters out stocks trading below their **50-day Simple Moving Average (SMA)**.
+  3. It ranks remaining candidates by trend momentum ($\text{price} / \text{50-day SMA}$) and selects the top performers, padding with core defaults as needed.
+* **Token & Cost Efficiency**: The heavy news scraping and LLM sentiment analysis are run **only** on the dynamically generated 10 active tickers (using 0 LLM tokens during screening), keeping API costs low and predictable.
 * **Sandbox Limit**: Execution budget capped at **$100** total starting equity.
 * **Traceability**: All execution steps, reasoning strings, and account snapshots must be logged to BigQuery.
   
+---
+
+## 🧠 Financial Analyst Logic (How It Works)
+
+The pipeline employs a **three-stage quantitative & qualitative funnel** to filter, narrow down, and execute trades on stocks in a cost-efficient manner.
+
+```mermaid
+graph TD
+    A["Central Allow List (40 AI Tickers)"] -->|"Stage 1: Technical Screening (Free)"| B["Daily Watchlist (10 Tickers)"]
+    B -->|"Stage 2: Sentiment Analysis (LLM)"| C["Conviction Ranking (1-10)"]
+    C -->|"Stage 3: Timing & Crossovers (RSI/MACD)"| D["Execution Decisions (Buy/Sell/Hold)"]
+```
+
+### Stage 1: Technical Screening & Filtering
+Every day, a lightweight Python pre-screener scans the 40 stocks in the centralized allowed universe. This scan uses raw price data via `yfinance` (**0 LLM tokens**):
+1.  **Holdings Override**: It checks the latest BigQuery portfolio snapshot. Any stock we currently own is automatically promoted to the watchlist so it is monitored for hold/sell decisions.
+2.  **SMA Trend Filter**: Non-owned candidate stocks are filtered out if they are trading below their **50-day Simple Moving Average (SMA)**, avoiding declining stocks.
+3.  **Momentum Ranking**: The remaining candidates are scored by trend momentum ($\text{price} / \text{50-day SMA}$). The top performers are selected to fill the remaining slots.
+4.  **Watchlist Padding**: If fewer than 10 stocks pass, core defaults (like `NVDA`, `AMD`, and the hedge `TLT`) pad the list to ensure exactly **10 active tickers** are analyzed.
+
+### Stage 2: Sentiment Analysis
+The pipeline fetches the latest 24 hours of news for the 10 active watchlist tickers and passes it to the **Sentiment Agent** (Gemini-Flash):
+*   **Conviction Score**: The agent assigns a raw sentiment score from `-1.0` (highly bearish news) to `+1.0` (highly bullish news).
+*   **Deterministic Sorting**: Python code sorts the assets by sentiment score and assigns a relative rank from `1` (lowest score) to `10` (highest score).
+*   **Core Signals**:
+    *   **LIQUIDATE**: Assigned to bottom-ranked assets (Ranks 1, 2, 3).
+    *   **STRONG BUY**: Assigned to top-ranked assets (Ranks 4-10) only if the sentiment score exceeds `0.2`.
+    *   **HOLD**: Assigned to top-ranked assets with flat/uncertain sentiment scores ($\le 0.2$).
+
+### Stage 3: Trade Execution Timing (RSI & MACD)
+The **Trading Agent** reviews the holdings, cash, and rolling weekly technical metrics from BigQuery. It adjusts trade execution timing using:
+*   **RSI (Relative Strength Index)**:
+    *   *Caution on Rises*: Avoids buying/adding to positions in assets with **RSI > 70** (overbought, price stretched too high).
+    *   *Bargain Hunting*: Targets entries when **RSI is near or below 30** (oversold, price dropped too fast).
+*   **MACD Crossovers (Trend Confirmation)**:
+    *   *Bullish (MACD Line > Signal Line)*: Confirms upward price momentum is accelerating, justifying buy orders.
+    *   *Bearish (MACD Line < Signal Line)*: Warns that downward momentum is taking over, justifying liquidations.
+*   **Defensive Allocation (TLT)**: If sentiment is generally weak, or fewer than 3 AI positions meet buy criteria, the agent allocates the cash to the safe-haven Treasury bond ETF (**TLT**) to protect capital.
+
 ---
 
 ## 🛠️ Deployed Streamlit Dashboard

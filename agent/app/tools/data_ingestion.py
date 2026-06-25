@@ -75,10 +75,11 @@ def fetch_ticker_news(ticker: str, current_time: float | None = None) -> List[Di
     return filtered_news
 
 
-def ingest_market_news(current_time: float | None = None) -> Dict[str, List[Dict[str, str]]]:
-    """Ingests latest 24-hour news for the 10 predefined AI infrastructure and hedge assets.
+def ingest_market_news(tickers: List[str] | None = None, current_time: float | None = None) -> Dict[str, List[Dict[str, str]]]:
+    """Ingests latest 24-hour news for a list of assets (defaults to active tickers).
 
     Args:
+        tickers: Optional list of tickers. Defaults to active tickers.
         current_time: Reference unix timestamp. Defaults to time.time().
 
     Returns:
@@ -87,8 +88,9 @@ def ingest_market_news(current_time: float | None = None) -> Dict[str, List[Dict
     if current_time is None:
         current_time = time.time()
 
+    target_tickers = tickers if tickers is not None else TICKERS
     results = {}
-    for ticker in TICKERS:
+    for ticker in target_tickers:
         results[ticker] = fetch_ticker_news(ticker, current_time=current_time)
     return results
 
@@ -218,10 +220,11 @@ def fetch_ticker_market_data(ticker: str, current_time: float | None = None) -> 
     return data
 
 
-def ingest_market_data(current_time: float | None = None) -> Dict[str, Dict[str, Any]]:
-    """Ingests latest market data (news + metrics) for the 10 predefined assets.
+def ingest_market_data(tickers: List[str] | None = None, current_time: float | None = None) -> Dict[str, Dict[str, Any]]:
+    """Ingests latest market data (news + metrics) for a list of assets (defaults to active tickers).
 
     Args:
+        tickers: Optional list of tickers. Defaults to active tickers.
         current_time: Reference unix timestamp. Defaults to time.time().
 
     Returns:
@@ -230,8 +233,9 @@ def ingest_market_data(current_time: float | None = None) -> Dict[str, Dict[str,
     if current_time is None:
         current_time = time.time()
 
+    target_tickers = tickers if tickers is not None else TICKERS
     results = {}
-    for ticker in TICKERS:
+    for ticker in target_tickers:
         results[ticker] = fetch_ticker_market_data(ticker, current_time=current_time)
     return results
 

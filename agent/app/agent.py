@@ -87,8 +87,12 @@ async def analyze_and_rank_portfolio(tool_context: ToolContext) -> dict:
     Returns:
         A dictionary containing the ranked portfolio results with relative ranks and trade signals.
     """
-    # 1. Ingest news
-    news_dict = ingest_market_news()
+    # 1. Dynamically determine the watchlist
+    from app.tools.ticker_universe import determine_active_watchlist
+    active_tickers = await determine_active_watchlist()
+
+    # 2. Ingest news only for the active watchlist
+    news_dict = ingest_market_news(tickers=active_tickers)
 
     # 2. Run sentiment_agent using a separate sub-session
     session_service = InMemorySessionService()
@@ -211,9 +215,13 @@ async def run_daily_analysis_pipeline(dataset_id: str = "portfolio_analytics") -
     from app.tools.data_ingestion import ingest_market_data
     from app.tools.ranking import process_sentiment_rankings
     from app.tools.bigquery_service import insert_sentiment
+    from app.tools.ticker_universe import determine_active_watchlist
 
-    # 1. Ingest latest market news and metrics
-    market_data = ingest_market_data()
+    # 1. Dynamically determine the watchlist
+    active_tickers = await determine_active_watchlist(dataset_id=dataset_id)
+
+    # 2. Ingest latest market news and metrics only for the active watchlist
+    market_data = ingest_market_data(tickers=active_tickers)
 
     # 2. Run sentiment agent sub-session
     session_service = InMemorySessionService()
