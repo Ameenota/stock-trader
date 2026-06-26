@@ -15,10 +15,15 @@
 
 import os
 
-from google.adk.agents import Agent
+from google.adk.agents import Agent, BaseAgent, LoopAgent
 from google.adk.apps import App
 from google.adk.models import Gemini
 from google.genai import types
+from pydantic import BaseModel, Field
+from typing import List, Optional, AsyncGenerator
+from google.adk.events import Event, EventActions
+from google.adk.agents.invocation_context import InvocationContext
+from google.adk.agents.callback_context import CallbackContext
 
 # Set to True to use Vertex AI (GCP), or False to use Google AI Studio (GEMINI_API_KEY)
 USE_VERTEX_AI = True
@@ -63,6 +68,20 @@ from app.tools.ticker_universe import get_allowed_tickers
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.adk.tools import ToolContext
+
+
+class TargetAllocation(BaseModel):
+    ticker: str = Field(description="The stock ticker symbol. Must be from the allowed universe.")
+    weight_pct: float = Field(description="The target weight as a fraction of total equity (e.g. 0.30 for 30%).")
+
+class AnalystProposal(BaseModel):
+    allocations: List[TargetAllocation] = Field(description="The list of target stock allocations.")
+    thesis: str = Field(description="Detailed explanation of your choices, incorporating news sentiment and technical overlays.")
+
+class AdvisorCritique(BaseModel):
+    approved: bool = Field(description="True if the analyst's proposal satisfies all strict rules. False if any rule is violated.")
+    feedback: str = Field(description="Detailed critique explaining which rules were satisfied and which were violated.")
+    suggested_allocations: Optional[List[TargetAllocation]] = Field(default=None, description="A revised target allocation proposal if rejected.")
 
 sentiment_agent = Agent(
     name="sentiment_agent",
@@ -122,91 +141,127 @@ async def analyze_and_rank_portfolio(tool_context: ToolContext) -> dict:
 
 import sys
 
-# System prompt for trading execution agent
-TRADING_AGENT_INSTRUCTION = """(limit all queries or actions to the agentic account ending in 48661)
-You are a professional financial execution expert. Your goal is to review the current Robinhood portfolio holdings and cash balance, analyze the historical rolling metrics provided, and execute trades to keep our portfolio aligned with our target state.
+# Prompts for Multi-Agent Critique Loop
+ANALYST_INSTRUCTION = """You are a portfolio analyst agent. Your goal is to analyze the market metrics and news sentiment for our watchlist and propose a draft portfolio of stock allocations.
 
-Our rules:
-1. Limit actions to the agentic account ending in 48661.
-2. We hold a maximum of 3 assets at any time.
-3. **Total Budget and Cash Buffer**: Our total target budget is $100.00. You must target keeping a cash buffer of 10% ($10.00) idle in the account. **Cash Tolerance Range**: If the current cash balance is between $5.00 and $15.00, do not make any trades to adjust the cash balance. Only execute trades to replenish or reduce cash back to the target $10.00 if it drifts below $5.00 or above $15.00.
-4. **Active Stock Budget & Position Tolerance**: The budget for active stock holdings is $90.00 (Total Budget minus Cash Buffer). For your 3 active holdings, target an equal split of $30.00 (30% of total budget) per stock. **Position Tolerance Range**: If a currently held asset's equity value is between $27.00 and $33.00, do not execute any orders to adjust its weight. Only rebalance a stock if its value drifts below $27.00 or above $33.00, or if the asset is being liquidated entirely.
-5. Identify which stocks/assets to hold, buy, or liquidate based on the signals (Sentiment, Momentum, Analyst recommendation, and Technical Indicators like RSI and MACD) over the weekly historical range.
-6. TLT is our treasury option (safe-haven / fallback asset). If tech/AI signals are generally weak, crashing, or there are fewer than 3 strong AI positions, allocate the defensive portion (or all) of the active budget to TLT to protect capital.
-7. Liquidate positions (sell 100%) for any asset that is no longer recommended to hold.
-8. Log the reasoning for every executed transaction (BUY, SELL, or LIQUIDATE) you perform by calling insert_trade_record. Use exactly "BUY", "SELL", or "LIQUIDATE" for the action parameter. Do NOT log or call insert_trade_record for HOLD decisions, as they are not active trades.
-9. Utilize Technical Indicators (rsi, macd, macd_signal) to improve trade execution timing:
-   - Be cautious of buying/increasing positions in assets with RSI > 70 (overbought condition).
-   - Look for entry/buying signals when RSI is near or below 30 (oversold condition).
-   - Use MACD crossovers (e.g., macd crossing above macd_signal is a bullish signal; macd crossing below macd_signal is a bearish signal) to confirm trend momentum shifts.
-10. **Hysteresis & Swap Buffer**: To prevent marginal churn (frequent, inefficient trading of assets for minor conviction gains), you must strictly enforce a swap threshold. You are only allowed to sell/liquidate an existing holding to buy a new candidate asset if the new candidate's conviction score (`raw_score` in today's metrics log) is at least **0.3 higher** than the score of the asset you are replacing (i.e. `new_candidate.raw_score - existing_holding.raw_score > 0.3`). If the delta is 0.3 or less, keep holding the existing asset instead of swapping. This hysteresis rule does not apply when liquidating an asset that has a direct negative sentiment or liquidation signal, or when deploying idle cash.
-11. **Final Decision Logging**: Once you have completed all analysis and trade execution, you MUST call the `log_trading_decisions` tool exactly once to log your final signals and theses for all 10 assets. Do not finish your run without calling this tool. Each decision in the list must specify the 'ticker', 'signal' (STRONG BUY, HOLD, or LIQUIDATE), and a concise 'thesis' (max 2 sentences). The 'thesis' MUST start by explicitly referencing the news sentiment rank and score from today's watchlist (e.g. 'Ranked #3 on news sentiment with a 0.80 score...'), and then justify your final signal using technical metrics (RSI, MACD, 50-day SMA, etc.) and portfolio execution rules (such as the 0.3 hysteresis buffer or overbought/oversold levels)."""
+Starting Portfolio State:
+- Total Equity: ${total_equity}
+- Current Cash: ${current_cash} ({current_cash_pct}% of total equity)
+- Current Holdings: {current_holdings}
 
+Today's Watch List & Metrics:
+{ranked_portfolio}
+
+Historical Weekly Metrics:
+{weekly_metrics}
+
+Advisor Critique from Previous Iteration:
+{advisor_critique}
+
+Propose target allocations for stocks as percentages of total equity (e.g. 0.30 for 30%). You can select up to 3 active holdings (targeting 30% each, summing to 90% of total equity, leaving 10% for cash). If you want to allocate to a defensive treasury bond option, choose TLT. If you have exceptional conviction, you may allocate up to 90% of total equity to a single high-conviction stock.
+Your proposal must output a list of TargetAllocation objects under the `allocations` key. You must also output the final signals and theses for all watchlist assets under the `decisions` key.
+"""
+
+SENIOR_ADVISOR_INSTRUCTION = """You are a senior financial advisor and risk critic. Your goal is to review the draft portfolio proposal generated by the portfolio analyst and ensure it strictly follows our technical trading rules, while allowing for concentrated, high-risk sector or asset picks.
+
+Starting Portfolio State:
+- Total Equity: ${total_equity}
+- Current Cash: ${current_cash} ({current_cash_pct}% of total equity)
+- Current Holdings: {current_holdings}
+- Active Watchlist (with RSI, MACD, and Conviction Scores): {watchlist_data}
+
+Analyst's Draft Proposal:
+{analyst_proposal}
+
+Our strict rules:
+1. Target Cash Buffer: A target cash buffer of 10% of total equity must be respected.
+2. Cash Tolerance Range: If current cash is between 5% and 15% of total equity, do not force cash adjustment.
+3. Position Sizing: The baseline target for a holding is 30% of total equity. However, you may approve allocations up to 90% for a single stock IF the conviction score is exceptional. Do not rebalance an existing holding if its current weight is within a +/- 3% tolerance of its target.
+4. Technical timing checks:
+   - REJECT any buy/scale-up order if the asset's RSI > 70 (overbought condition).
+   - Look for entry when RSI is near or below 30.
+   - Confirm trend momentum using MACD crossovers.
+5. Hysteresis swap buffer: REJECT replacing an existing holding with a new candidate unless the new candidate's conviction score is at least 0.3 higher than the existing holding's score.
+
+Output format:
+You must output a structured review matching the AdvisorCritique schema. If you reject the proposal, you must provide explicit, mathematically sound feedback so the analyst can correct the weights in the next iteration.
+"""
+
+class AssetDecision(BaseModel):
+    ticker: str = Field(description="The stock ticker symbol.")
+    signal: str = Field(description="The final action signal. Must be 'STRONG BUY', 'HOLD', or 'LIQUIDATE'.")
+    thesis: str = Field(description="A concise thesis (max 2 sentences) justifying the signal based on news rank, sentiment, and technical metrics.")
+
+class AnalystProposal(BaseModel):
+    allocations: List[TargetAllocation] = Field(description="The list of target stock allocations.")
+    decisions: List[AssetDecision] = Field(description="Signal and thesis decisions for all assets in today's active watchlist.")
+    thesis: str = Field(description="Detailed explanation of your choices, incorporating news sentiment and technical overlays.")
+
+class AdvisorCritique(BaseModel):
+    approved: bool = Field(description="True if the analyst's proposal satisfies all strict rules. False if any rule is violated.")
+    feedback: str = Field(description="Detailed critique explaining which rules were satisfied and which were violated.")
+    suggested_allocations: Optional[List[TargetAllocation]] = Field(default=None, description="A revised target allocation proposal if rejected.")
+
+
+class EscalationChecker(BaseAgent):
+    """Checks the advisor's critique. If approved, escalates to break the loop."""
+    async def _run_async_impl(self, ctx: InvocationContext) -> AsyncGenerator[Event, None]:
+        critique = ctx.session.state.get("advisor_critique")
+        approved = False
+        feedback = "No feedback yet."
+        if critique:
+            if isinstance(critique, dict):
+                approved = critique.get("approved", False)
+                feedback = critique.get("feedback", "No feedback yet.")
+            else:
+                approved = getattr(critique, "approved", False)
+                feedback = getattr(critique, "feedback", "No feedback yet.")
+
+        if approved:
+            print(f"\n[EscalationChecker] Critique APPROVED. Feedback: {feedback}")
+            print("[EscalationChecker] Escalating to break loop...")
+            yield Event(author=self.name, actions=EventActions(escalate=True))
+        else:
+            print(f"\n[EscalationChecker] Critique REJECTED. Continuing loop. Feedback: {feedback}")
+            yield Event(author=self.name)
+
+
+portfolio_analyst = Agent(
+    name="portfolio_analyst",
+    model=Gemini(
+        model="gemini-flash-latest",
+        retry_options=types.HttpRetryOptions(attempts=3),
+    ),
+    instruction=ANALYST_INSTRUCTION,
+    output_schema=AnalystProposal,
+    output_key="analyst_proposal",
+)
+
+senior_risk_advisor = Agent(
+    name="senior_risk_advisor",
+    model=Gemini(
+        model="gemini-flash-latest",
+        retry_options=types.HttpRetryOptions(attempts=3),
+    ),
+    instruction=SENIOR_ADVISOR_INSTRUCTION,
+    output_schema=AdvisorCritique,
+    output_key="advisor_critique",
+)
+
+escalation_checker = EscalationChecker(name="escalation_checker")
+
+portfolio_stabilizer_loop = LoopAgent(
+    name="portfolio_stabilizer_loop",
+    sub_agents=[portfolio_analyst, senior_risk_advisor, escalation_checker],
+    max_iterations=5,
+)
 
 LAST_TRADING_DECISIONS = []
-
-def log_trading_decisions(decisions, tool_context: ToolContext) -> str:
-    """Logs the final signal and thesis decisions made by you for all 10 assets on the watchlist.
-    
-    Args:
-        decisions: A list of dicts, where each dict has:
-                   - 'ticker': str (e.g., 'TSM')
-                   - 'signal': str ('STRONG BUY', 'HOLD', or 'LIQUIDATE')
-                   - 'thesis': str (unified news + technical thesis starting with news rank/sentiment, then technical overlay/hysteresis explanation)
-    """
-    print(f"\n[TOOL CALL] log_trading_decisions called with: {decisions}")
-    global LAST_TRADING_DECISIONS
-    
-    # Handle single string input representing the entire list
-    if isinstance(decisions, str):
-        import ast
-        try:
-            decisions = ast.literal_eval(decisions)
-        except Exception:
-            import json
-            try:
-                decisions = json.loads(decisions)
-            except Exception:
-                pass
-
-    if not isinstance(decisions, list):
-        return "Error: decisions must be a list of dictionaries."
-
-    parsed_decisions = []
-    for d in decisions:
-        if isinstance(d, dict):
-            parsed_decisions.append(d)
-        elif isinstance(d, str):
-            import ast
-            try:
-                # ast.literal_eval handles python dict string representations with single quotes
-                parsed = ast.literal_eval(d)
-                if isinstance(parsed, dict):
-                    parsed_decisions.append(parsed)
-            except Exception:
-                import json
-                try:
-                    parsed = json.loads(d)
-                    if isinstance(parsed, dict):
-                        parsed_decisions.append(parsed)
-                except Exception:
-                    pass
-        else:
-            try:
-                parsed_decisions.append(dict(d))
-            except Exception:
-                pass
-
-    LAST_TRADING_DECISIONS = parsed_decisions
-    tool_context.session.state["trading_decisions"] = parsed_decisions
-    return f"Successfully logged final decisions for {len(parsed_decisions)} assets."
-
 
 async def validate_and_intercept_trades(tool, args, tool_context) -> dict | None:
     """Interceptor callback (Double Guardrail + Dry Run) for trading execution."""
     print(f"   [DEBUG INTERCEPT] Tool '{tool.name}' called with args: {args}")
     # 1. Enforce Robinhood Account Restriction
-    # Inspect arguments for account number key (e.g. 'account_number', 'account')
     account_keys = [k for k in args.keys() if "account" in k.lower()]
     for key in account_keys:
         val = args.get(key)
@@ -219,7 +274,6 @@ async def validate_and_intercept_trades(tool, args, tool_context) -> dict | None
                 )
 
     # 2. Enforce Predefined 10-Asset Universe
-    # Inspect arguments for ticker symbol keys (e.g. 'symbol', 'ticker')
     ticker_keys = [k for k in args.keys() if "symbol" in k.lower() or "ticker" in k.lower()]
     ALLOWED_TICKERS = set(get_allowed_tickers())
     for key in ticker_keys:
@@ -258,166 +312,42 @@ async def validate_and_intercept_trades(tool, args, tool_context) -> dict | None
     return None
 
 
-trading_agent = Agent(
-    name="trading_agent",
-    model=Gemini(
-        model="gemini-flash-latest",
-        retry_options=types.HttpRetryOptions(attempts=3),
-    ),
-    instruction=TRADING_AGENT_INSTRUCTION,
-    tools=[robinhood_toolset, insert_trade_record, log_trading_decisions],
-    before_tool_callback=validate_and_intercept_trades,
-)
-
-
-async def run_daily_analysis_pipeline(dataset_id: str = "portfolio_analytics") -> list:
-    """Ingests market news/metrics, runs sentiment analysis agent, ranks assets,
-    and logs decisions to BigQuery.
-    """
-    from datetime import datetime, timezone
-    from app.tools.data_ingestion import ingest_market_data
-    from app.tools.ranking import process_sentiment_rankings
-    from app.tools.bigquery_service import insert_sentiment
-    from app.tools.ticker_universe import determine_active_watchlist
-
-    # 1. Dynamically determine the watchlist and get details for all universe assets
-    active_tickers, all_tickers_details = await determine_active_watchlist(dataset_id=dataset_id, return_details=True)
-
-    # 2. Ingest latest market news and metrics only for the active watchlist
-    market_data = ingest_market_data(tickers=active_tickers)
-
-    # 2. Run sentiment agent sub-session
-    session_service = InMemorySessionService()
-    session = await session_service.create_session(user_id="cron_job", app_name="sentiment")
-    runner = Runner(agent=sentiment_agent, session_service=session_service, app_name="sentiment")
-
-    news_dict = {ticker: data.get("news", []) for ticker, data in market_data.items()}
-
-    message = types.Content(
-        role="user",
-        parts=[types.Part.from_text(text=f"Analyze these news articles:\n{news_dict}")]
-    )
-
-    async for _ in runner.run_async(
-        new_message=message,
-        user_id="cron_job",
-        session_id=session.id,
-    ):
-        pass
-
-    session = await session_service.get_session(user_id="cron_job", session_id=session.id, app_name="sentiment")
-    sentiment_result = session.state.get("sentiment_result")
-    if not sentiment_result:
-        raise RuntimeError("Failed to retrieve sentiment analysis output from the LLM agent.")
-
-    # 3. Sort, rank and assign signals
-    ranked_portfolio = process_sentiment_rankings(sentiment_result)
-
-    # 4. Attach raw news and technical metrics for auditing
-    current_time_str = datetime.now(timezone.utc).isoformat()
-    for item in ranked_portfolio:
-        ticker = item["ticker"]
-        item["timestamp"] = current_time_str
-        ticker_data = market_data.get(ticker, {})
-        item["raw_news"] = ticker_data.get("news", [])
-        item["analyst_consensus"] = ticker_data.get("analyst_consensus")
-        item["target_price"] = ticker_data.get("target_price")
-        item["current_price"] = ticker_data.get("current_price")
-        item["moving_average_20d"] = ticker_data.get("moving_average_20d")
-        item["price_to_ma_ratio"] = ticker_data.get("price_to_ma_ratio")
-        item["rsi"] = ticker_data.get("rsi")
-        item["macd"] = ticker_data.get("macd")
-        item["macd_signal"] = ticker_data.get("macd_signal")
-
-    # 5. Build placeholder rows for the filtered graveyard assets to prove LLM token savings
-    graveyard_rows = []
-    for ticker, detail in all_tickers_details.items():
-        if detail.get("status") == "FILTERED":
-            graveyard_rows.append({
-                "ticker": ticker,
-                "raw_score": 0.0,
-                "thesis": f"Filtered: {detail.get('reason', 'Excluded by pre-screener')}",
-                "relative_rank": 0,
-                "signal": "FILTERED",
-                "timestamp": current_time_str,
-                "raw_news": "[]",
-                "analyst_consensus": "N/A",
-                "target_price": None,
-                "current_price": detail.get("current_price"),
-                "moving_average_20d": detail.get("sma_50"),
-                "price_to_ma_ratio": detail.get("momentum"),
-                "rsi": None,
-                "macd": None,
-                "macd_signal": None
-            })
-
-    # 6. Ingest and log SPY benchmark data
-    try:
-        spy_data = ingest_market_data(tickers=["SPY"])
-        spy_price = spy_data.get("SPY", {}).get("current_price")
-        if spy_price:
-            print(f"   Successfully ingested SPY benchmark price: ${spy_price:.2f}")
-            graveyard_rows.append({
-                "ticker": "SPY",
-                "raw_score": 0.0,
-                "thesis": "S&P 500 Index Benchmark",
-                "relative_rank": 0,
-                "signal": "BENCHMARK",
-                "timestamp": current_time_str,
-                "raw_news": "[]",
-                "analyst_consensus": "N/A",
-                "target_price": None,
-                "current_price": spy_price,
-                "moving_average_20d": None,
-                "price_to_ma_ratio": None,
-                "rsi": None,
-                "macd": None,
-                "macd_signal": None
-            })
-    except Exception as e:
-        print(f"   Warning: Failed to ingest SPY: {e}")
-
-    # Return both ranked portfolio and graveyard rows to the orchestrator to log after execution
-    return ranked_portfolio, graveyard_rows
-
 
 async def execute_trading_decisions(
     ranked_portfolio: list, 
     graveyard_rows: list | None = None, 
     dataset_id: str = "portfolio_analytics"
 ) -> list:
-    """Queries weekly metrics history, runs the trading_agent to execute trades, updates the portfolio with its thesis/signals, and logs to BQ."""
-    global LAST_TRADING_DECISIONS
-    LAST_TRADING_DECISIONS = []
+    """Runs a multi-agent critique debate loop to finalize stock allocations,
+    then executes trades using ExecutionController and logs snapshot/trades to BigQuery."""
     from app.tools.bigquery_service import get_historical_metrics
+    from app.execution import ExecutionController
 
     # 1. Fetch weekly historical signals log
     weekly_metrics = get_historical_metrics(days=7, dataset_id=dataset_id)
     
-    # 2. Run trading agent session
     # Clear INTEGRATION_TEST to allow the McpToolset to connect
     if "INTEGRATION_TEST" in os.environ:
         del os.environ["INTEGRATION_TEST"]
 
-    # Fetch actual holdings and cash from Robinhood to inject into prompt context
+    # 2. Fetch current holdings and cash from Robinhood to initialize loop state
     print("\nFetching current portfolio state from Robinhood...")
     total_cash = 100.0
     holdings = []
     
+    account_number = os.environ.get("ROBINHOOD_ACCOUNT_NUMBER")
+    if not account_number:
+        if os.environ.get("SKIP_LIVE_TRADES", "false").lower() == "true":
+            account_number = "MOCK_ACCOUNT_48661"
+        else:
+            raise RuntimeError("Security Guardrail: ROBINHOOD_ACCOUNT_NUMBER environment variable is not set.")
+
+    if not account_number or not str(account_number).endswith("48661"):
+        raise RuntimeError(f"Security Guardrail: Unauthorized Robinhood account '{account_number}'. All operations restricted to accounts ending in 48661.")
+
     try:
         tools = await robinhood_toolset.get_tools()
         tools_dict = {t.name: t for t in tools}
-        
-        # Resolve target account ending in 48661 from environment variables
-        account_number = os.environ.get("ROBINHOOD_ACCOUNT_NUMBER")
-        if not account_number:
-            if os.environ.get("SKIP_LIVE_TRADES", "false").lower() == "true":
-                account_number = "MOCK_ACCOUNT_48661"
-            else:
-                raise RuntimeError("Security Guardrail: ROBINHOOD_ACCOUNT_NUMBER environment variable is not set.")
-
-        if not account_number or not str(account_number).endswith("48661"):
-            raise RuntimeError(f"Security Guardrail: Unauthorized Robinhood account '{account_number}'. All operations restricted to accounts ending in 48661.")
 
         if "get_portfolio" in tools_dict:
             try:
@@ -425,7 +355,7 @@ async def execute_trading_decisions(
                 data = port_res.get("structuredContent", {}).get("data", {})
                 total_cash = float(data.get("cash", 100.0))
             except Exception as e:
-                print(f"   [DEBUG ERROR] get_portfolio failed: {e}")
+                print(f"   [ERROR] get_portfolio failed: {e}")
 
         if "get_equity_positions" in tools_dict:
             try:
@@ -461,48 +391,132 @@ async def execute_trading_decisions(
                                 "equity": qty * price
                             })
             except Exception as e:
-                print(f"   [DEBUG ERROR] get_equity_positions failed: {e}")
+                print(f"   [ERROR] get_equity_positions failed: {e}")
     except Exception as e:
         print(f"   Warning: Failed to fetch live portfolio state: {e}")
 
+    # Compute starting Total Equity and weights
+    holdings_value = sum(h["equity"] for h in holdings)
+    total_equity = total_cash + holdings_value
+    current_cash_pct = (total_cash / total_equity) * 100 if total_equity > 0 else 0.0
+    
+    # Format holdings as a list with current weights for visibility
+    current_holdings_str = str([{
+        "symbol": h["symbol"],
+        "shares": h["shares"],
+        "current_price": h["current_price"],
+        "equity": h["equity"],
+        "weight_pct": f"{(h['equity']/total_equity)*100:.1f}%" if total_equity > 0 else "0.0%"
+    } for h in holdings])
+
+    # Build active watchlist summary containing RSI, MACD, and Conviction Scores
+    watchlist_summary = str([{
+        "ticker": item["ticker"],
+        "conviction_score": item["raw_score"],
+        "sentiment_signal": item["signal"],
+        "rsi": item.get("rsi"),
+        "macd": item.get("macd"),
+        "macd_signal": item.get("macd_signal")
+    } for item in ranked_portfolio])
+
     print(f"   Current Cash: ${total_cash:.2f}")
-    print(f"   Current Holdings: {holdings}")
+    print(f"   Current Holdings: {current_holdings_str}")
+    print(f"   Total Equity: ${total_equity:.2f}")
 
+    # 3. Initialize loop session state and run the Multi-Agent Loop
     session_service = InMemorySessionService()
-    session = await session_service.create_session(user_id="cron_job", app_name="trading")
-    runner = Runner(agent=trading_agent, session_service=session_service, app_name="trading")
-
-    prompt_text = f"""Please perform today's trading execution and portfolio rebalancing.
-
-Here is your current starting Robinhood portfolio state:
-- Available Cash (Buying Power): ${total_cash:.2f}
-- Current Holdings (List of positions): {holdings}
-
-Here is today's active watch list with news sentiment rankings, scores, and technical indicators. (Refer to this log to populate your output schema):
-{ranked_portfolio}
-
-Here is the historical metrics log for all 10 assets over the past week (excluding today):
-{weekly_metrics}"""
-
-    message = types.Content(
-        role="user",
-        parts=[types.Part.from_text(text=prompt_text)]
+    initial_state = {
+        "total_equity": f"{total_equity:.2f}",
+        "current_cash": f"{total_cash:.2f}",
+        "current_cash_pct": f"{current_cash_pct:.1f}",
+        "current_holdings": current_holdings_str,
+        "watchlist_data": watchlist_summary,
+        "ranked_portfolio": str(ranked_portfolio),
+        "weekly_metrics": str(weekly_metrics),
+        "advisor_critique": "No previous critique. This is your first proposal."
+    }
+    session = await session_service.create_session(
+        user_id="cron_job",
+        app_name="trading",
+        state=initial_state
     )
 
-    # Execute and stream reasoning to standard output
-    print("\n=== Trading Agent Execution & Reasoning Stream ===")
+    runner = Runner(agent=portfolio_stabilizer_loop, session_service=session_service, app_name="trading")
+
+    print("\n=== Starting Multi-Agent Portfolio debate loop ===")
     async for event in runner.run_async(
-        new_message=message,
+        new_message=types.Content(role="user", parts=[types.Part.from_text(text="Please start the debate loop to finalize today's target allocations.")]),
         user_id="cron_job",
         session_id=session.id,
     ):
+        # We print logs to stdout for observability
         if event.content and event.content.parts:
             for part in event.content.parts:
                 if part.text:
                     print(part.text, end="", flush=True)
-    print("\n==================================================\n")
+    print("\n=== Multi-Agent Loop Finished ===")
 
-    # 3. Log post-trade portfolio snapshot
+    # Retrieve final approved target allocations from the latest session state
+    session = await session_service.get_session(user_id="cron_job", session_id=session.id, app_name="trading")
+    proposal = session.state.get("analyst_proposal")
+    if not proposal:
+        print("\n[CRITICAL ERROR] Failed to obtain approved portfolio target allocations from the loop agent.")
+        return ranked_portfolio
+
+    # Extract allocations and decisions supporting both dictionary and Pydantic formats
+    approved_allocations = []
+    decisions = []
+
+    if isinstance(proposal, dict):
+        allocations_raw = proposal.get("allocations", [])
+        for a in allocations_raw:
+            if isinstance(a, dict):
+                approved_allocations.append({
+                    "ticker": a.get("ticker"),
+                    "weight_pct": a.get("weight_pct")
+                })
+            else:
+                approved_allocations.append({
+                    "ticker": getattr(a, "ticker"),
+                    "weight_pct": getattr(a, "weight_pct")
+                })
+        decisions = proposal.get("decisions", [])
+    else:
+        allocations_raw = getattr(proposal, "allocations", [])
+        for a in allocations_raw:
+            approved_allocations.append({
+                "ticker": a.ticker,
+                "weight_pct": a.weight_pct
+            })
+        decisions = getattr(proposal, "decisions", [])
+
+    print(f"\nApproved target allocations: {approved_allocations}")
+
+    # Map decisions (signal/thesis) back to ranked_portfolio
+    decision_map = {}
+    for d in decisions:
+        if isinstance(d, dict):
+            ticker = d.get("ticker", "").strip().upper()
+            signal = d.get("signal", "").strip().upper()
+            thesis = d.get("thesis", "")
+        else:
+            ticker = getattr(d, "ticker", "").strip().upper()
+            signal = getattr(d, "signal", "").strip().upper()
+            thesis = getattr(d, "thesis", "")
+        if ticker:
+            decision_map[ticker] = {"signal": signal, "thesis": thesis}
+
+    for item in ranked_portfolio:
+        ticker = item["ticker"].strip().upper()
+        if ticker in decision_map:
+            item["signal"] = decision_map[ticker]["signal"]
+            item["thesis"] = decision_map[ticker]["thesis"]
+
+    # 4. Instantiate ExecutionController and run broker execution
+    controller = ExecutionController(toolset=robinhood_toolset, account_number=account_number, dataset_id=dataset_id)
+    await controller.execute_rebalance(approved_allocations=approved_allocations)
+
+    # 5. Log post-trade portfolio snapshot to BigQuery
     print("\nLogging portfolio snapshot to BigQuery...")
     try:
         await log_portfolio_snapshot(dataset_id=dataset_id)
@@ -510,49 +524,7 @@ Here is the historical metrics log for all 10 assets over the past week (excludi
     except Exception as e:
         print(f"   Warning: Failed to log portfolio snapshot: {e}")
 
-    # 4. Extract structured Trading Agent results and update today's ranked portfolio
-    try:
-        decisions = LAST_TRADING_DECISIONS
-        
-        # If the agent forgot to call the log tool, prompt it explicitly to do so
-        if not decisions:
-            print("\n[RETRY] Agent did not call log_trading_decisions. Prompting agent to finalize...")
-            message_retry = types.Content(
-                role="user",
-                parts=[types.Part.from_text(text="You did not call the log_trading_decisions tool. Please call log_trading_decisions now with the final signals and theses for all 10 assets to finalize today's run.")]
-            )
-            async for event in runner.run_async(
-                new_message=message_retry,
-                user_id="cron_job",
-                session_id=session.id,
-            ):
-                if event.content and event.content.parts:
-                    for part in event.content.parts:
-                        if part.text:
-                            print(part.text, end="", flush=True)
-            
-            decisions = LAST_TRADING_DECISIONS
-
-        print(f"\n[DEBUG] execute_trading_decisions retrieved decisions: {decisions}")
-        if decisions:
-            decision_map = {}
-            for d in decisions:
-                ticker = d.get("ticker", "").strip().upper() if isinstance(d, dict) else getattr(d, "ticker", "").strip().upper()
-                signal = d.get("signal", "HOLD").strip().upper() if isinstance(d, dict) else getattr(d, "signal", "HOLD").strip().upper()
-                thesis = d.get("thesis", "") if isinstance(d, dict) else getattr(d, "thesis", "")
-                if ticker:
-                    decision_map[ticker] = {"signal": signal, "thesis": thesis}
-
-            # Map signals back to portfolio
-            for item in ranked_portfolio:
-                ticker = item["ticker"].strip().upper()
-                if ticker in decision_map:
-                    item["signal"] = decision_map[ticker]["signal"]
-                    item["thesis"] = decision_map[ticker]["thesis"]
-    except Exception as e:
-        print(f"   Warning: Failed to extract structured Trading Agent decisions: {e}")
-
-    # 5. Log final unified results (10 active + 30 graveyard + 1 benchmark) to BigQuery if graveyard_rows are provided
+    # 6. Log final unified results to BigQuery
     if graveyard_rows is not None:
         print("\nLogging final signals and unified theses to BigQuery...")
         try:

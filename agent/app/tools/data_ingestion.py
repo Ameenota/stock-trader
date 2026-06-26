@@ -265,3 +265,116 @@ def print_portfolio_table(portfolio: list) -> None:
         
         print(f"{item['ticker']:<6} | {item['raw_score']:<6.2f} | {item['relative_rank']:<5} | {item['signal']:<11} | {price_str:<8} | {ma_str:<8} | {ratio_str:<8} | {rsi_str:<6} | {macd_str:<8} | {macd_sig_str:<8} | {consensus:<10} | {truncated_thesis}")
     print("="*175 + "\n")
+
+
+async def run_sentiment_analysis_pipeline(dataset_id: str = "portfolio_analytics") -> tuple[list, list]:
+    """Ingests market news/metrics, runs sentiment analysis agent, ranks assets,
+    and logs decisions to BigQuery.
+    """
+    from datetime import datetime, timezone
+    from google.adk.sessions import InMemorySessionService
+    from google.adk.runners import Runner
+    from google.genai import types
+    from app.agent import sentiment_agent
+    from app.tools.ranking import process_sentiment_rankings
+    from app.tools.ticker_universe import determine_active_watchlist
+
+    # 1. Dynamically determine the watchlist and get details for all universe assets
+    active_tickers, all_tickers_details = await determine_active_watchlist(dataset_id=dataset_id, return_details=True)
+
+    # 2. Ingest latest market news and metrics only for the active watchlist
+    market_data = ingest_market_data(tickers=active_tickers)
+
+    # 2. Run sentiment agent sub-session
+    session_service = InMemorySessionService()
+    session = await session_service.create_session(user_id="cron_job", app_name="sentiment")
+    runner = Runner(agent=sentiment_agent, session_service=session_service, app_name="sentiment")
+
+    news_dict = {ticker: data.get("news", []) for ticker, data in market_data.items()}
+
+    message = types.Content(
+        role="user",
+        parts=[types.Part.from_text(text=f"Analyze these news articles:\n{news_dict}")]
+    )
+
+    async for _ in runner.run_async(
+        new_message=message,
+        user_id="cron_job",
+        session_id=session.id,
+    ):
+        pass
+
+    session = await session_service.get_session(user_id="cron_job", session_id=session.id, app_name="sentiment")
+    sentiment_result = session.state.get("sentiment_result")
+    if not sentiment_result:
+        raise RuntimeError("Failed to retrieve sentiment analysis output from the LLM agent.")
+
+    # 3. Sort, rank and assign signals
+    ranked_portfolio = process_sentiment_rankings(sentiment_result)
+
+    # 4. Attach raw news and technical metrics for auditing
+    current_time_str = datetime.now(timezone.utc).isoformat()
+    for item in ranked_portfolio:
+        ticker = item["ticker"]
+        item["timestamp"] = current_time_str
+        ticker_data = market_data.get(ticker, {})
+        item["raw_news"] = ticker_data.get("news", [])
+        item["analyst_consensus"] = ticker_data.get("analyst_consensus")
+        item["target_price"] = ticker_data.get("target_price")
+        item["current_price"] = ticker_data.get("current_price")
+        item["moving_average_20d"] = ticker_data.get("moving_average_20d")
+        item["price_to_ma_ratio"] = ticker_data.get("price_to_ma_ratio")
+        item["rsi"] = ticker_data.get("rsi")
+        item["macd"] = ticker_data.get("macd")
+        item["macd_signal"] = ticker_data.get("macd_signal")
+
+    # 5. Build placeholder rows for the filtered graveyard assets to prove LLM token savings
+    graveyard_rows = []
+    for ticker, detail in all_tickers_details.items():
+        if detail.get("status") == "FILTERED":
+            graveyard_rows.append({
+                "ticker": ticker,
+                "raw_score": 0.0,
+                "thesis": f"Filtered: {detail.get('reason', 'Excluded by pre-screener')}",
+                "relative_rank": 0,
+                "signal": "FILTERED",
+                "timestamp": current_time_str,
+                "raw_news": "[]",
+                "analyst_consensus": "N/A",
+                "target_price": None,
+                "current_price": detail.get("current_price"),
+                "moving_average_20d": detail.get("sma_50"),
+                "price_to_ma_ratio": detail.get("momentum"),
+                "rsi": None,
+                "macd": None,
+                "macd_signal": None
+            })
+
+    # 6. Ingest and log SPY benchmark data
+    try:
+        spy_data = ingest_market_data(tickers=["SPY"])
+        spy_price = spy_data.get("SPY", {}).get("current_price")
+        if spy_price:
+            print(f"   Successfully ingested SPY benchmark price: ${spy_price:.2f}")
+            graveyard_rows.append({
+                "ticker": "SPY",
+                "raw_score": 0.0,
+                "thesis": "S&P 500 Index Benchmark",
+                "relative_rank": 0,
+                "signal": "BENCHMARK",
+                "timestamp": current_time_str,
+                "raw_news": "[]",
+                "analyst_consensus": "N/A",
+                "target_price": None,
+                "current_price": spy_price,
+                "moving_average_20d": None,
+                "price_to_ma_ratio": None,
+                "rsi": None,
+                "macd": None,
+                "macd_signal": None
+            })
+    except Exception as e:
+        print(f"   Warning: Failed to ingest SPY: {e}")
+
+    # Return both ranked portfolio and graveyard rows to the orchestrator to log after execution
+    return ranked_portfolio, graveyard_rows

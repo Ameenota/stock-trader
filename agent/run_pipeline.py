@@ -45,8 +45,8 @@ from app.tools.bigquery_service import (
     setup_bigquery, 
     get_latest_market_metrics,
 )
-from app.tools.data_ingestion import print_portfolio_table
-from app.agent import run_daily_analysis_pipeline, execute_trading_decisions
+from app.tools.data_ingestion import print_portfolio_table, run_sentiment_analysis_pipeline
+from app.agent import execute_trading_decisions
 
 async def run_pipeline(dataset_id: str = "portfolio_analytics") -> None:
     print(f"[{datetime.now(timezone.utc).isoformat()}] Starting AI Infrastructure Analyst pipeline...")
@@ -73,9 +73,9 @@ async def run_pipeline(dataset_id: str = "portfolio_analytics") -> None:
             skip_ingestion = False
 
     if not skip_ingestion:
-        # Run daily analysis pipeline helper from app.agent
+        # Run daily analysis pipeline helper from data_ingestion tool
         print("\nRunning daily analysis pipeline (ingestion, sentiment analysis, ranking)...")
-        ranked_portfolio, graveyard_rows = await run_daily_analysis_pipeline(dataset_id=dataset_id)
+        ranked_portfolio, graveyard_rows = await run_sentiment_analysis_pipeline(dataset_id=dataset_id)
         print("   Daily analysis pipeline finished (metrics gathered).")
 
     # Run trading agent for portfolio execution and rebalancing

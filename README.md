@@ -19,13 +19,21 @@ graph TD
     SA -->|LLM Sentiment Scores| PR[Deterministic Python Ranking Logic]
     PR -->|Signal & conviction ranking| BQ1[(BigQuery: infrastructure_market_metrics)]
     
-    BQ1 -->|Weekly Historical Metrics| TA[Execution Trading Agent - Gemini]
-    TA -->|1. Request Orders| Guardrail[Double Account Guardrails & Dry-run Interceptor]
-    Guardrail -->|2. Executed Orders| MCP[Robinhood MCP Server]
-    MCP -->|3. Actual Account Positions| Snapshot[Post-Trade Snapshot Logger]
+    subgraph MultiAgentLoop ["Multi-Agent Critique Loop (ADK LoopAgent)"]
+        PA[Portfolio Analyst Agent - Gemini] -->|Proposes draft TargetAllocations %| SRA[Senior Risk Advisor Critic - Gemini]
+        SRA -->|Returns AdvisorCritique structured review| PA
+        SRA -->|Approved / Feedback| EC[Escalation Checker BaseAgent]
+    end
     
-    TA -->|Log Decisions| BQ2[(BigQuery: trade_history)]
-    Snapshot -->|Log holdings & cash| BQ3[(BigQuery: portfolio_snapshot)]
+    BQ1 -->|Weekly Historical Metrics| PA
+    LiveBroker[Live Cash & Holdings from Robinhood] -->|Starts state inputs| PA
+    
+    EC -->|Final Approved target weights %| Exec[Deterministic Python Execution Controller]
+    Exec -->|1. Calculates Deltas & enforces tolerance ranges| Guardrail[Double Guardrails & Dry-run Interceptor]
+    Guardrail -->|2. Places sequentially sells then buys| MCP[Robinhood MCP Server]
+    
+    Exec -->|Logs Trades| BQ2[(BigQuery: trade_history)]
+    Exec -->|Logs Holdings & Cash| BQ3[(BigQuery: portfolio_snapshot)]
     
     subgraph BQ_Warehouse ["BigQuery Data Warehouse"]
         BQ1
@@ -46,10 +54,13 @@ graph TD
 * **Target Audience**: Retail investors seeking safe, autonomous, AI-driven portfolio rebalancing with high observability.
 
 ### 2. Course Topics Demonstrated
-* **Multi-Agent Coordination & ADK**: We decoupled logic into two specialized agents:
+* **Multi-Agent Coordination & ADK**: We decoupled logic into three specialized agents coordinated within a native ADK `LoopAgent` debate loop:
   - `sentiment_agent`: Analyzes market news and computes sentiment scores.
-  - `trading_agent`: Reviews cash, queries historical signals, manages weights, and places orders.
-* **Model Context Protocol (MCP)**: The trading agent uses an active Robinhood MCP server to run queries (`get_portfolio`, `get_accounts`) and order tools (`place_equity_order`).
+  - `portfolio_analyst`: Evaluates technical scores and conviction, proposing a target portfolio allocation (in percentages).
+  - `senior_risk_advisor`: Reviews proposals as a critic, ensuring budget limits and technical entry thresholds are respected.
+  - `escalation_checker`: Custom python agent that breaks the debate loop once a proposal is approved.
+  - **Decoupled Execution**: Execution logic is fully separated into a deterministic Python controller (`ExecutionController`), keeping brokerage calls completely isolated from LLM agents.
+* **Model Context Protocol (MCP)**: The deterministic execution layer uses an active Robinhood MCP server to run queries (`get_portfolio`, `get_equity_positions`) and order tools (`place_equity_order`).
 * **Double Account Guardrails & Interceptor Callback**:
   - *Prompt Protection*: Instructs the agent to only target the account ending in `48661`.
   - *Code Interceptor*: A Python callback inspects all tool arguments in real-time, blocking unauthorized assets, enforcing account validation, and returning simulated success packets when dry-run mode (`SKIP_LIVE_TRADES=true`) is active.
@@ -96,15 +107,12 @@ The pipeline fetches the latest 24 hours of news for the 10 active watchlist tic
     *   **STRONG BUY**: Assigned to top-ranked assets (Ranks 4-10) only if the sentiment score exceeds `0.2`.
     *   **HOLD**: Assigned to top-ranked assets with flat/uncertain sentiment scores ($\le 0.2$).
 
-### Stage 3: Trade Execution Timing (RSI & MACD)
-The **Trading Agent** reviews the holdings, cash, and rolling weekly technical metrics from BigQuery. It adjusts trade execution timing using:
-*   **RSI (Relative Strength Index)**:
-    *   *Caution on Rises*: Avoids buying/adding to positions in assets with **RSI > 70** (overbought, price stretched too high).
-    *   *Bargain Hunting*: Targets entries when **RSI is near or below 30** (oversold, price dropped too fast).
-*   **MACD Crossovers (Trend Confirmation)**:
-    *   *Bullish (MACD Line > Signal Line)*: Confirms upward price momentum is accelerating, justifying buy orders.
-    *   *Bearish (MACD Line < Signal Line)*: Warns that downward momentum is taking over, justifying liquidations.
-*   **Defensive Allocation (TLT)**: If sentiment is generally weak, or fewer than 3 AI positions meet buy criteria, the agent allocates the cash to the safe-haven Treasury bond ETF (**TLT**) to protect capital.
+### Stage 3: Multi-Agent Critique Loop & Decoupled Execution
+Instead of executing trades directly from LLM prompts, the target state is debated and finalized by a multi-agent critique loop, then executed deterministically:
+1. **Portfolio Analyst Agent**: Proposes target stock allocations (percentages of total equity) based on today's watchlist and weekly metrics.
+2. **Senior Risk Advisor Agent (Critic)**: Enforces technical entry guardrails (RSI <= 70, MACD momentum crossovers, hysteresis score swaps >= 0.3) and percentage budget safety bounds.
+3. **Escalation Checker**: Custom `BaseAgent` that terminates the LoopAgent when the proposal receives approval from the Advisor.
+4. **Execution Controller**: Evaluates target weights vs current holdings, applies cash buffer tolerance (5%-15% of equity) and position tolerance (+/- 3%) to prevent minor churn, and schedules trades sequentially (sells first, then buys) via the Robinhood MCP server. TLT remains the Treasury ETF fallback if technical criteria are not met.
 
 ---
 
