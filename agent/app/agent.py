@@ -199,11 +199,11 @@ class EscalationChecker(BaseAgent):
                 feedback = getattr(critique, "feedback", "No feedback yet.")
 
         if approved:
-            print(f"\n[EscalationChecker] Critique APPROVED. Feedback: {feedback}")
-            print("[EscalationChecker] Escalating to break loop...")
+            print(f"\nESCALATION_CHECKER: (replied with:) Critique APPROVED. Feedback: {feedback}")
+            print("ESCALATION_CHECKER: Escalating to break loop...")
             yield Event(author=self.name, actions=EventActions(escalate=True))
         else:
-            print(f"\n[EscalationChecker] Critique REJECTED. Continuing loop. Feedback: {feedback}")
+            print(f"\nESCALATION_CHECKER: (replied with:) Critique REJECTED. Continuing loop. Feedback: {feedback}")
             yield Event(author=self.name)
 
 
@@ -322,6 +322,8 @@ async def financial_analysis_pipeline(
     print(f"   Total Equity: ${total_equity:.2f}")
 
     # 3. Initialize loop session state and run the Multi-Agent Loop
+    print("\n[PHASE: 4. Entering Multi-Agent Portfolio Debate Loop]")
+    print("   Initializing debate loop with PORTFOLIO_ANALYST, SENIOR_RISK_ADVISOR, and ESCALATION_CHECKER...")
     session_service = InMemorySessionService()
     initial_state = {
         "total_equity": f"{total_equity:.2f}",
@@ -342,18 +344,18 @@ async def financial_analysis_pipeline(
 
     runner = Runner(agent=portfolio_stabilizer_loop, session_service=session_service, app_name="trading")
 
-    print("\n=== Starting Multi-Agent Portfolio debate loop ===")
     async for event in runner.run_async(
         new_message=types.Content(role="user", parts=[types.Part.from_text(text="Please start the debate loop to finalize today's target allocations.")]),
         user_id="cron_job",
         session_id=session.id,
     ):
-        # We print logs to stdout for observability
         if event.content and event.content.parts:
-            for part in event.content.parts:
-                if part.text:
-                    print(part.text, end="", flush=True)
-    print("\n=== Multi-Agent Loop Finished ===")
+            content_str = "".join([part.text for part in event.content.parts if part.text]).strip()
+            if content_str:
+                author_name = event.author.upper() if event.author else "SYSTEM"
+                if author_name != "ESCALATION_CHECKER":
+                    print(f"\n{author_name}: (replied with:)\n{content_str}\n")
+    print("\n[PHASE: 4. Exit (Multi-Agent Loop Finished)]")
 
     # Retrieve final approved target allocations from the latest session state
     session = await session_service.get_session(user_id="cron_job", session_id=session.id, app_name="trading")
@@ -412,8 +414,11 @@ async def financial_analysis_pipeline(
             item["thesis"] = decision_map[ticker]["thesis"]
 
     # 4. Instantiate ExecutionController and run broker execution
+    print("\n[PHASE: 5. Execution & Portfolio Rebalancing]")
+    print(f"   Connecting to Robinhood MCP tools for target account ending in 48661...")
     controller = ExecutionController(toolset=robinhood_toolset, account_number=account_number, dataset_id=dataset_id)
     await controller.execute_rebalance(approved_allocations=approved_allocations)
+    print("[PHASE: 5. Exit]")
 
     # 5. Log post-trade portfolio snapshot to BigQuery
     print("\nLogging portfolio snapshot to BigQuery...")

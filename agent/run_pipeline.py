@@ -52,9 +52,10 @@ async def run_pipeline(dataset_id: str = "portfolio_analytics") -> None:
     print(f"[{datetime.now(timezone.utc).isoformat()}] Starting AI Infrastructure Analyst pipeline...")
 
     # Step 1: Initialize BigQuery Dataset and Tables
-    print(f"\n1. Setting up BigQuery dataset '{dataset_id}' and tables...")
+    print(f"\n[PHASE: 1. Setup BigQuery Database]")
+    print(f"   Initializing BigQuery dataset '{dataset_id}' and validating schemas...")
     setup_bigquery(dataset_id=dataset_id)
-    print("   Dataset and tables verified/created successfully.")
+    print("   BigQuery verification complete.")
 
     # Determine if we skip ingestion (from env or if BQ today has records)
     skip_ingestion = os.environ.get("SKIP_INGESTION", "false").lower() == "true"
@@ -74,18 +75,15 @@ async def run_pipeline(dataset_id: str = "portfolio_analytics") -> None:
 
     if not skip_ingestion:
         # Run daily analysis pipeline helper from data_ingestion tool
-        print("\nRunning daily analysis pipeline (ingestion, sentiment analysis, ranking)...")
         ranked_portfolio, graveyard_rows = await run_sentiment_analysis_pipeline(dataset_id=dataset_id)
-        print("   Daily analysis pipeline finished (metrics gathered).")
 
     # Run trading agent for portfolio execution and rebalancing
-    print("\nExecuting trading decisions...")
     final_portfolio = await financial_analysis_pipeline(
         ranked_portfolio=ranked_portfolio,
         graveyard_rows=graveyard_rows,
         dataset_id=dataset_id
     )
-    print("   Portfolio execution completed and logged.")
+    print("\n[PHASE: Complete] Portfolio execution and logs finalized.")
 
     # Print final portfolio table (now with Trading Agent signals & theses!)
     print_portfolio_table(final_portfolio)

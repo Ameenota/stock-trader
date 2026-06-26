@@ -280,12 +280,20 @@ async def run_sentiment_analysis_pipeline(dataset_id: str = "portfolio_analytics
     from app.tools.ticker_universe import determine_active_watchlist
 
     # 1. Dynamically determine the watchlist and get details for all universe assets
+    print("\n[PHASE: 2. Ingestion & Watchlist Screening]")
+    print("   Determining active watchlist from 40-asset universe...")
     active_tickers, all_tickers_details = await determine_active_watchlist(dataset_id=dataset_id, return_details=True)
+    print(f"   Active watchlist generated: {active_tickers}")
+    print(f"   Ingesting news & metrics from Yahoo Finance for watchlist tickers...")
 
     # 2. Ingest latest market news and metrics only for the active watchlist
     market_data = ingest_market_data(tickers=active_tickers)
+    print(f"   Yahoo Finance ingestion complete for {len(market_data)} tickers.")
+    print("[PHASE: 2. Exit]")
 
-    # 2. Run sentiment agent sub-session
+    # 3. Run sentiment agent sub-session
+    print("\n[PHASE: 3. Sentiment Analysis via Gemini]")
+    print("   Invoking SENTIMENT_AGENT (Gemini) to evaluate news sentiment...")
     session_service = InMemorySessionService()
     session = await session_service.create_session(user_id="cron_job", app_name="sentiment")
     runner = Runner(agent=sentiment_agent, session_service=session_service, app_name="sentiment")
@@ -309,8 +317,25 @@ async def run_sentiment_analysis_pipeline(dataset_id: str = "portfolio_analytics
     if not sentiment_result:
         raise RuntimeError("Failed to retrieve sentiment analysis output from the LLM agent.")
 
-    # 3. Sort, rank and assign signals
+    from app.tools.ranking import SentimentAnalysisResponse
+    # Print the specific outputs returned by the Sentiment Agent
+    print("   SENTIMENT_AGENT: Completed news sentiment analysis:")
+    analyses_list = []
+    if isinstance(sentiment_result, SentimentAnalysisResponse):
+        analyses_list = sentiment_result.analyses
+    elif isinstance(sentiment_result, dict) and "analyses" in sentiment_result:
+        analyses_list = sentiment_result["analyses"]
+    else:
+        analyses_list = sentiment_result
+        
+    for item in analyses_list:
+        ticker = getattr(item, "ticker") if not isinstance(item, dict) else item.get("ticker")
+        score = getattr(item, "raw_score") if not isinstance(item, dict) else item.get("raw_score")
+        print(f"      - {ticker}: conviction score = {score:+.2f}")
+
+    # 4. Sort, rank and assign signals
     ranked_portfolio = process_sentiment_rankings(sentiment_result)
+    print("[PHASE: 3. Exit]")
 
     # 4. Attach raw news and technical metrics for auditing
     current_time_str = datetime.now(timezone.utc).isoformat()
