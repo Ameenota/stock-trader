@@ -103,6 +103,7 @@ def setup_bigquery(dataset_id: str = "portfolio_analytics") -> None:
         bigquery.SchemaField("unrealized_gain_loss", "FLOAT", mode="REQUIRED"),
         bigquery.SchemaField("unrealized_gain_loss_percent", "FLOAT", mode="REQUIRED"),
         bigquery.SchemaField("holdings", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("buying_power", "FLOAT", mode="NULLABLE"),
     ]
     snapshot_table = bigquery.Table(snapshot_table_id, schema=snapshot_schema)
     try:
@@ -325,7 +326,8 @@ def insert_portfolio_snapshot(
         "total_cash": float(snapshot["total_cash"]),
         "unrealized_gain_loss": float(snapshot["unrealized_gain_loss"]),
         "unrealized_gain_loss_percent": float(snapshot["unrealized_gain_loss_percent"]),
-        "holdings": snapshot["holdings"]  # JSON-formatted string
+        "holdings": snapshot["holdings"],  # JSON-formatted string
+        "buying_power": float(snapshot["buying_power"]) if snapshot.get("buying_power") is not None else None
     }
 
     try:
@@ -480,3 +482,76 @@ def get_latest_portfolio_holdings(dataset_id: str = "portfolio_analytics") -> Li
         pass
 
     return []
+
+
+def get_recent_trades(
+    limit: int = 10,
+    dry_run: bool = True,
+    dataset_id: str = "portfolio_analytics"
+) -> List[Dict[str, Any]]:
+    """Queries BigQuery and returns the most recent trades for the given execution mode."""
+    client = get_bigquery_client()
+    table_id = f"{client.project}.{dataset_id}.trade_history"
+
+    query = f"""
+        SELECT ticker, action, amount_usd, timestamp, reasoning
+        FROM `{table_id}`
+        WHERE dry_run = @dry_run
+        ORDER BY timestamp DESC
+        LIMIT @limit
+    """
+    
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("dry_run", "BOOL", dry_run),
+            bigquery.ScalarQueryParameter("limit", "INT64", limit)
+        ]
+    )
+    try:
+        query_job = client.query(query, job_config=job_config)
+        results = query_job.result()
+        trades = []
+        for row in results:
+            trades.append({
+                "ticker": row.ticker,
+                "action": row.action,
+                "amount_usd": row.amount_usd,
+                "timestamp": row.timestamp.isoformat() if hasattr(row.timestamp, "isoformat") else str(row.timestamp),
+                "reasoning": row.reasoning
+            })
+        return trades
+    except Exception:
+        return []
+
+
+def get_last_buy_timestamp(
+    ticker: str,
+    dry_run: bool = True,
+    dataset_id: str = "portfolio_analytics"
+) -> datetime | None:
+    """Queries the timestamp of the last BUY action for the given ticker and execution mode."""
+    client = get_bigquery_client()
+    table_id = f"{client.project}.{dataset_id}.trade_history"
+
+    query = f"""
+        SELECT timestamp
+        FROM `{table_id}`
+        WHERE ticker = @ticker AND action = 'BUY' AND dry_run = @dry_run
+        ORDER BY timestamp DESC
+        LIMIT 1
+    """
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("ticker", "STRING", ticker),
+            bigquery.ScalarQueryParameter("dry_run", "BOOL", dry_run)
+        ]
+    )
+    try:
+        query_job = client.query(query, job_config=job_config)
+        results = list(query_job.result())
+        if results:
+            return results[0].timestamp
+    except Exception:
+        pass
+    return None
+

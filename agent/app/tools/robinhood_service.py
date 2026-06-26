@@ -87,13 +87,14 @@ robinhood_toolset = McpToolset(
 )
 
 
-async def fetch_robinhood_portfolio_state(account_number: str) -> Tuple[float, List[Dict[str, Any]]]:
-    """Queries Robinhood MCP tools for current cash and holdings.
+async def fetch_robinhood_portfolio_state(account_number: str) -> Tuple[float, float, List[Dict[str, Any]]]:
+    """Queries Robinhood MCP tools for current cash, buying power and holdings.
     
     Returns:
-        A tuple (total_cash, holdings) where holdings is a list of dicts.
+        A tuple (total_cash, buying_power, holdings) where holdings is a list of dicts.
     """
     total_cash = 100.0
+    buying_power = 100.0
     holdings = []
 
     try:
@@ -105,6 +106,7 @@ async def fetch_robinhood_portfolio_state(account_number: str) -> Tuple[float, L
                 port_res = await tools_dict["get_portfolio"].run_async(args={"account_number": account_number}, tool_context=None)
                 data = port_res.get("structuredContent", {}).get("data", {})
                 total_cash = float(data.get("cash", 100.0))
+                buying_power = float(data.get("buying_power", {}).get("buying_power", total_cash))
             except Exception as e:
                 print(f"   [ERROR] get_portfolio failed: {e}")
 
@@ -146,7 +148,7 @@ async def fetch_robinhood_portfolio_state(account_number: str) -> Tuple[float, L
     except Exception as e:
         print(f"   Warning: Failed to fetch live portfolio state from Robinhood: {e}")
 
-    return total_cash, holdings
+    return total_cash, buying_power, holdings
 
 
 async def log_portfolio_snapshot(dataset_id: str = "portfolio_analytics") -> None:
@@ -165,7 +167,7 @@ async def log_portfolio_snapshot(dataset_id: str = "portfolio_analytics") -> Non
     if not account_number or not str(account_number).endswith("48661"):
         raise RuntimeError(f"Security Guardrail: Unauthorized Robinhood account '{account_number}'. All operations restricted to accounts ending in 48661.")
 
-    total_cash, holdings = await fetch_robinhood_portfolio_state(account_number)
+    total_cash, buying_power, holdings = await fetch_robinhood_portfolio_state(account_number)
     holdings_value = sum(h["equity"] for h in holdings)
     total_equity = total_cash + holdings_value
     unrealized_gain_loss = total_equity - 100.0
@@ -175,6 +177,7 @@ async def log_portfolio_snapshot(dataset_id: str = "portfolio_analytics") -> Non
         "account_number": f"••••{account_number[-5:]}" if len(account_number) >= 5 else account_number,
         "total_equity": total_equity,
         "total_cash": total_cash,
+        "buying_power": buying_power,
         "unrealized_gain_loss": unrealized_gain_loss,
         "unrealized_gain_loss_percent": unrealized_gain_loss_percent,
         "holdings": json.dumps(holdings)

@@ -70,7 +70,7 @@ dataset_id = "portfolio_analytics"
 def load_latest_snapshot() -> dict:
     """Loads the most recent portfolio snapshot from BigQuery."""
     query = f"""
-        SELECT timestamp, account_number, total_equity, total_cash, unrealized_gain_loss, unrealized_gain_loss_percent, holdings
+        SELECT timestamp, account_number, total_equity, total_cash, buying_power, unrealized_gain_loss, unrealized_gain_loss_percent, holdings
         FROM `{project}.{dataset_id}.portfolio_snapshot`
         ORDER BY timestamp DESC
         LIMIT 1
@@ -80,11 +80,13 @@ def load_latest_snapshot() -> dict:
         results = list(query_job.result())
         if results:
             row = results[0]
+            bp = getattr(row, "buying_power", None)
             return {
                 "timestamp": row.timestamp,
                 "account_number": row.account_number,
                 "total_equity": row.total_equity,
                 "total_cash": row.total_cash,
+                "buying_power": bp if bp is not None else row.total_cash,
                 "unrealized_gain_loss": row.unrealized_gain_loss,
                 "unrealized_gain_loss_percent": row.unrealized_gain_loss_percent,
                 "holdings": json.loads(row.holdings) if row.holdings else []
@@ -98,6 +100,7 @@ def load_latest_snapshot() -> dict:
         "account_number": "••••N/A",
         "total_equity": 100.0,
         "total_cash": 100.0,
+        "buying_power": 100.0,
         "unrealized_gain_loss": 0.0,
         "unrealized_gain_loss_percent": 0.0,
         "holdings": []
@@ -250,7 +253,7 @@ TICKER_DOMAINS = {
     "INTC": "intel.com",
     "VST": "vistracorp.com",
     "GE": "ge.com",
-    "PSTG": "purestorage.com",
+    "MRVL": "marvell.com",
     "HPE": "hpe.com",
     "PLTR": "palantir.com",
     "IBM": "ibm.com",
@@ -259,7 +262,7 @@ TICKER_DOMAINS = {
     "SAP": "sap.com",
     "NET": "cloudflare.com",
     "DDOG": "datadoghq.com",
-    "ANSS": "ansys.com",
+    "SNOW": "snowflake.com",
     "CRWD": "crowdstrike.com",
     "PANW": "paloaltonetworks.com",
     "QCOM": "qualcomm.com"
@@ -460,8 +463,8 @@ with m1:
     )
 with m2:
     st.metric(
-        label="Available Cash (Buying Power)",
-        value=f"${snap['total_cash']:.2f}"
+        label="Settled Cash (Buying Power)",
+        value=f"${snap['buying_power']:.2f}"
     )
 with m3:
     gain_loss = snap['unrealized_gain_loss']

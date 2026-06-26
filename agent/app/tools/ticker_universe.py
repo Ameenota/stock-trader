@@ -46,11 +46,11 @@ TICKER_UNIVERSE = [
     # 4. Semiconductor Manufacturing Equipment
     "ASML", "AMAT", "LRCX", "KLAC", "INTC",
     # 5. Datacenter Utilities & Infrastructure
-    "VST", "GE", "PSTG", "HPE",
+    "VST", "GE", "MRVL", "HPE",
     # 6. AI Software & Integration Services
     "PLTR", "IBM", "NOW", "ADBE", "SAP",
     # 7. Edge Inference & Monitoring
-    "NET", "DDOG", "ANSS",
+    "NET", "DDOG", "SNOW",
     # 8. AI-driven Security & Edge Devices
     "CRWD", "PANW", "QCOM"
 ]

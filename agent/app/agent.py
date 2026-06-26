@@ -52,15 +52,6 @@ class TargetAllocation(BaseModel):
     ticker: str = Field(description="The stock ticker symbol. Must be from the allowed universe.")
     weight_pct: float = Field(description="The target weight as a fraction of total equity (e.g. 0.30 for 30%).")
 
-class AnalystProposal(BaseModel):
-    allocations: List[TargetAllocation] = Field(description="The list of target stock allocations.")
-    thesis: str = Field(description="Detailed explanation of your choices, incorporating news sentiment and technical overlays.")
-
-class AdvisorCritique(BaseModel):
-    approved: bool = Field(description="True if the analyst's proposal satisfies all strict rules. False if any rule is violated.")
-    feedback: str = Field(description="Detailed critique explaining which rules were satisfied and which were violated.")
-    suggested_allocations: Optional[List[TargetAllocation]] = Field(default=None, description="A revised target allocation proposal if rejected.")
-
 sentiment_agent = Agent(
     name="sentiment_agent",
     model=Gemini(
@@ -125,7 +116,10 @@ ANALYST_INSTRUCTION = """You are a portfolio analyst agent. Your goal is to anal
 Starting Portfolio State:
 - Total Equity: ${total_equity}
 - Current Cash: ${current_cash} ({current_cash_pct}% of total equity)
-- Current Holdings: {current_holdings}
+- Current Holdings (with days_held): {current_holdings}
+
+Recent Trade History:
+{recent_trades}
 
 Today's Watch List & Metrics:
 {ranked_portfolio}
@@ -136,7 +130,11 @@ Historical Weekly Metrics:
 Advisor Critique from Previous Iteration:
 {advisor_critique}
 
-Propose target allocations for stocks as percentages of total equity (e.g. 0.30 for 30%). You can select up to 3 active holdings (targeting 30% each, summing to 90% of total equity, leaving 10% for cash). If you want to allocate to a defensive treasury bond option, choose TLT. If you have exceptional conviction, you may allocate up to 90% of total equity to a single high-conviction stock.
+Propose target allocations for stocks as percentages of total equity (e.g. 0.30 for 30%). You can select up to 3 active holdings (targeting 30% each, summing to 90% of total equity, leaving 10% for cash). If you want to allocate to a defensive treasury bond option, choose TLT. If you have exceptional conviction, you may allocate up to 90% of total equity to a single high-conviction stock. Do not include CASH or USD in the allocations list. The cash buffer is managed implicitly by leaving the remaining percentage of total equity unallocated (e.g., target stock allocations summing to 90% of total equity, leaving 10% cash unallocated).
+
+Trading Rules to follow:
+- Avoid proposing to sell, reduce weight of, or liquidate any stock in "Current Holdings" if its `days_held` is less than 3, UNLESS its news sentiment raw score (conviction score) is extremely negative (below -0.5).
+
 Your proposal must output a list of TargetAllocation objects under the `allocations` key. You must also output the final signals and theses for all watchlist assets under the `decisions` key.
 """
 
@@ -145,7 +143,7 @@ SENIOR_ADVISOR_INSTRUCTION = """You are a senior financial advisor and risk crit
 Starting Portfolio State:
 - Total Equity: ${total_equity}
 - Current Cash: ${current_cash} ({current_cash_pct}% of total equity)
-- Current Holdings: {current_holdings}
+- Current Holdings (with days_held): {current_holdings}
 - Active Watchlist (with RSI, MACD, and Conviction Scores): {watchlist_data}
 
 Analyst's Draft Proposal:
@@ -160,9 +158,10 @@ Our strict rules:
    - Look for entry when RSI is near or below 30.
    - Confirm trend momentum using MACD crossovers.
 5. Hysteresis swap buffer: REJECT replacing an existing holding with a new candidate unless the new candidate's conviction score is at least 0.3 higher than the existing holding's score.
+6. Minimum holding period: REJECT any proposal to sell, reduce weight of, or liquidate an existing holding if its days_held < 3, UNLESS the ticker's news sentiment score (conviction_score) is extremely negative (below -0.5).
 
 Output format:
-You must output a structured review matching the AdvisorCritique schema. If you reject the proposal, you must provide explicit, mathematically sound feedback so the analyst can correct the weights in the next iteration.
+You must output a structured review matching the AdvisorCritique schema. If you reject the proposal, you must provide explicit, mathematically sound feedback so the analyst can correct the weights in the iteration.
 """
 
 class AssetDecision(BaseModel):
@@ -234,8 +233,6 @@ portfolio_stabilizer_loop = LoopAgent(
     max_iterations=5,
 )
 
-LAST_TRADING_DECISIONS = []
-
 async def financial_analysis_pipeline(
     ranked_portfolio: list, 
     graveyard_rows: list | None = None, 
@@ -267,21 +264,43 @@ async def financial_analysis_pipeline(
 
     # 2. Fetch current holdings and cash from Robinhood to initialize loop state
     print("\nFetching current portfolio state from Robinhood...")
-    total_cash, holdings = await fetch_robinhood_portfolio_state(account_number)
+    total_cash, buying_power, holdings = await fetch_robinhood_portfolio_state(account_number)
 
     # Compute starting Total Equity and weights
     holdings_value = sum(h["equity"] for h in holdings)
     total_equity = total_cash + holdings_value
     current_cash_pct = (total_cash / total_equity) * 100 if total_equity > 0 else 0.0
+
+    is_dry_run = os.environ.get("SKIP_LIVE_TRADES", "false").lower() == "true"
     
-    # Format holdings as a list with current weights for visibility
-    current_holdings_str = str([{
-        "symbol": h["symbol"],
-        "shares": h["shares"],
-        "current_price": h["current_price"],
-        "equity": h["equity"],
-        "weight_pct": f"{(h['equity']/total_equity)*100:.1f}%" if total_equity > 0 else "0.0%"
-    } for h in holdings])
+    # Calculate days_held for each holding from trade history
+    from app.tools.bigquery_service import get_last_buy_timestamp, get_recent_trades
+    from datetime import datetime, timezone
+    
+    now = datetime.now(timezone.utc)
+    holdings_with_days = []
+    for h in holdings:
+        last_buy = get_last_buy_timestamp(h["symbol"], dry_run=is_dry_run, dataset_id=dataset_id)
+        if last_buy:
+            if last_buy.tzinfo is None:
+                last_buy = last_buy.replace(tzinfo=timezone.utc)
+            days_held = (now - last_buy).days
+        else:
+            days_held = 999  # Long term or no history
+        
+        holdings_with_days.append({
+            "symbol": h["symbol"],
+            "shares": h["shares"],
+            "current_price": h["current_price"],
+            "equity": h["equity"],
+            "weight_pct": f"{(h['equity']/total_equity)*100:.1f}%" if total_equity > 0 else "0.0%",
+            "days_held": days_held
+        })
+    current_holdings_str = str(holdings_with_days)
+
+    # Fetch recent trades history
+    recent_trades = get_recent_trades(limit=10, dry_run=is_dry_run, dataset_id=dataset_id)
+    recent_trades_str = str(recent_trades) if recent_trades else "No recent trade history found."
 
     # Build active watchlist summary containing RSI, MACD, and Conviction Scores
     watchlist_summary = str([{
@@ -295,6 +314,7 @@ async def financial_analysis_pipeline(
 
     print(f"   Current Cash: ${total_cash:.2f}")
     print(f"   Current Holdings: {current_holdings_str}")
+    print(f"   Recent Trades: {recent_trades_str}")
     print(f"   Total Equity: ${total_equity:.2f}")
 
     # 3. Initialize loop session state and run the Multi-Agent Loop
@@ -304,6 +324,7 @@ async def financial_analysis_pipeline(
         "current_cash": f"{total_cash:.2f}",
         "current_cash_pct": f"{current_cash_pct:.1f}",
         "current_holdings": current_holdings_str,
+        "recent_trades": recent_trades_str,
         "watchlist_data": watchlist_summary,
         "ranked_portfolio": str(ranked_portfolio),
         "weekly_metrics": str(weekly_metrics),

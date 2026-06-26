@@ -30,6 +30,12 @@ class ExecutionController:
         respects tolerance bands, executes sells first then buys, and logs to BigQuery."""
         print("\n=== Execution Controller: Starting Portfolio Rebalancing ===")
         
+        # Filter out CASH and USD pseudo-allocations
+        approved_allocations = [
+            a for a in approved_allocations 
+            if a.get("ticker", "").upper() not in ("CASH", "USD")
+        ]
+        
         # 1. Get Robinhood tools from toolset
         tools = await self.toolset.get_tools()
         tools_dict = {t.name: t for t in tools}
@@ -37,6 +43,7 @@ class ExecutionController:
         # 2. Fetch current holdings and cash from Robinhood
         print("Fetching live portfolio state from Robinhood...")
         total_cash = 100.0
+        buying_power = 100.0
         positions = []
 
         if "get_portfolio" in tools_dict:
@@ -44,6 +51,7 @@ class ExecutionController:
                 port_res = await tools_dict["get_portfolio"].run_async(args={"account_number": self.account_number}, tool_context=None)
                 data = port_res.get("structuredContent", {}).get("data", {})
                 total_cash = float(data.get("cash", 100.0))
+                buying_power = float(data.get("buying_power", {}).get("buying_power", total_cash))
             except Exception as e:
                 print(f"   [ERROR] get_portfolio failed: {e}")
                 
@@ -210,57 +218,78 @@ class ExecutionController:
                     except Exception as e:
                         print(f"   [ERROR] Place sell order failed: {e}")
 
-        # Pause/Wait for order settlements
-        if sells:
-            print("\nWaiting 1 second for sell orders to settle before buying...")
-            time.sleep(1)
+        # Calculate spendable buying power
+        is_dry_run = os.environ.get("SKIP_LIVE_TRADES", "false").lower() == "true"
+        if is_dry_run:
+            total_sell_usd = sum(sell["amount_usd"] for sell in sells)
+            effective_buying_power = total_cash + total_sell_usd
+        else:
+            effective_buying_power = buying_power
 
-        # 6. Execute Buys Second
-        for buy in buys:
-            ticker = buy["ticker"]
-            shares = buy["shares"]
-            amt = buy["amount_usd"]
-            reason = buy["reasoning"]
-            shares_str = f"{shares:.6f}"
-            
-            print(f"\n[EXECUTION] Buying {shares_str} shares of {ticker} (${buy['amount_usd']:.2f}). Reason: {reason}")
-            
-            # Enforce double account guardrails & dry-run interceptor
-            if os.environ.get("SKIP_LIVE_TRADES", "false").lower() == "true":
-                print(f"[DRY_RUN] Intercepted place_equity_order and simulated success for {ticker}")
-                insert_trade_record(
-                    ticker=ticker,
-                    action="BUY",
-                    amount_usd=amt,
-                    reasoning=reason,
-                    dry_run=True,
-                    dataset_id=self.dataset_id
-                )
-            else:
-                if "place_equity_order" in tools_dict:
-                    try:
-                        args = {
-                            "account_number": self.account_number,
-                            "symbol": ticker,
-                            "side": "buy",
-                            "type": "market",
-                            "quantity": shares_str,
-                            "ref_id": str(uuid.uuid4())
-                        }
-                        res = await tools_dict["place_equity_order"].run_async(args=args, tool_context=None)
-                        print(f"   Order result: {res}")
-                        
-                        # Log trade receipt to BigQuery
-                        insert_trade_record(
-                            ticker=ticker,
-                            action="BUY",
-                            amount_usd=amt,
-                            reasoning=reason,
-                            dry_run=False,
-                            dataset_id=self.dataset_id
-                        )
-                    except Exception as e:
-                        print(f"   [ERROR] Place buy order failed: {e}")
+        min_cash_reserve = 0.05 * total_equity
+        max_spend = max(0.0, effective_buying_power - min_cash_reserve)
+        total_buy_usd_needed = sum(buy["amount_usd"] for buy in buys)
+
+        should_execute_buys = True
+        if buys and total_buy_usd_needed > max_spend:
+            print(f"\n[BUY POWER GUARD] Total buy needed (${total_buy_usd_needed:.2f}) exceeds spendable buying power (${max_spend:.2f}, based on buying power of ${effective_buying_power:.2f} and minimum cash reserve of ${min_cash_reserve:.2f}).")
+            print("Skipping all buy orders in this run to prevent buying power overdraft. Buys will execute in a future run once cash settles.")
+            should_execute_buys = False
+
+        if should_execute_buys:
+            # Pause/Wait for order settlements
+            if sells:
+                print("\nWaiting 1 second for sell orders to settle before buying...")
+                time.sleep(1)
+
+            # 6. Execute Buys Second
+            for buy in buys:
+                ticker = buy["ticker"]
+                shares = buy["shares"]
+                amt = buy["amount_usd"]
+                reason = buy["reasoning"]
+                shares_str = f"{shares:.6f}"
+                
+                print(f"\n[EXECUTION] Buying {shares_str} shares of {ticker} (${buy['amount_usd']:.2f}). Reason: {reason}")
+                
+                # Enforce double account guardrails & dry-run interceptor
+                if os.environ.get("SKIP_LIVE_TRADES", "false").lower() == "true":
+                    print(f"[DRY_RUN] Intercepted place_equity_order and simulated success for {ticker}")
+                    insert_trade_record(
+                        ticker=ticker,
+                        action="BUY",
+                        amount_usd=amt,
+                        reasoning=reason,
+                        dry_run=True,
+                        dataset_id=self.dataset_id
+                    )
+                else:
+                    if "place_equity_order" in tools_dict:
+                        try:
+                            args = {
+                                "account_number": self.account_number,
+                                "symbol": ticker,
+                                "side": "buy",
+                                "type": "market",
+                                "quantity": shares_str,
+                                "ref_id": str(uuid.uuid4())
+                            }
+                            res = await tools_dict["place_equity_order"].run_async(args=args, tool_context=None)
+                            print(f"   Order result: {res}")
+                            
+                            # Log trade receipt to BigQuery
+                            insert_trade_record(
+                                ticker=ticker,
+                                action="BUY",
+                                amount_usd=amt,
+                                reasoning=reason,
+                                dry_run=False,
+                                dataset_id=self.dataset_id
+                            )
+                        except Exception as e:
+                            print(f"   [ERROR] Place buy order failed: {e}")
+        else:
+            print("\nBuys skipped in this run.")
 
         print("\nAll trade executions completed.")
         print("=========================================================\n")
