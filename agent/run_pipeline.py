@@ -46,7 +46,7 @@ from app.tools.bigquery_service import (
     get_latest_market_metrics,
 )
 from app.tools.data_ingestion import print_portfolio_table, run_sentiment_analysis_pipeline
-from app.agent import execute_trading_decisions
+from app.agent import financial_analysis_pipeline
 
 async def run_pipeline(dataset_id: str = "portfolio_analytics") -> None:
     print(f"[{datetime.now(timezone.utc).isoformat()}] Starting AI Infrastructure Analyst pipeline...")
@@ -80,7 +80,7 @@ async def run_pipeline(dataset_id: str = "portfolio_analytics") -> None:
 
     # Run trading agent for portfolio execution and rebalancing
     print("\nExecuting trading decisions...")
-    final_portfolio = await execute_trading_decisions(
+    final_portfolio = await financial_analysis_pipeline(
         ranked_portfolio=ranked_portfolio,
         graveyard_rows=graveyard_rows,
         dataset_id=dataset_id

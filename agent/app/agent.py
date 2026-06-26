@@ -38,29 +38,7 @@ else:
     os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "False"
 
 
-from google.adk.tools.mcp_tool import McpToolset
-from google.adk.tools.mcp_tool.mcp_session_manager import StdioConnectionParams
-from mcp import StdioServerParameters
-
-# We delegate remote connection/auth to `mcp-remote` via standard stdio transport.
-# Why this approach:
-# 1. Robinhood MCP server uses Public OAuth 2.0 PKCE with dynamic client registration (no client_secret).
-# 2. ADK's built-in ExtendedOAuth2 scheme requires a static client_secret in raw_auth_credential
-#    and will raise a validation ValueError if it's missing.
-# 3. `mcp-remote` runs as a Node.js background process, handles public client registration,
-#    launches the browser, completes token exchanges, and securely saves the credentials to `~/.mcp-auth/`.
-# 4. Timeout is set to 300 seconds (5 mins) to give the user enough time to complete
-#    browser login and MFA verification without the ADK aborting and restarting the session.
-robinhood_toolset = McpToolset(
-    connection_params=StdioConnectionParams(
-        server_params=StdioServerParameters(
-            command="npx",
-            args=["-y", "mcp-remote", "https://agent.robinhood.com/mcp/trading"]
-        ),
-        timeout=300.0  # 5-minute timeout to allow interactive OAuth sign-in
-    )
-)
-
+from app.tools.robinhood_service import robinhood_toolset, validate_and_intercept_trades
 from app.tools.data_ingestion import ingest_market_news
 from app.tools.ranking import SentimentAnalysisResponse, process_sentiment_rankings
 from app.tools.bigquery_service import insert_trade_record
@@ -258,62 +236,7 @@ portfolio_stabilizer_loop = LoopAgent(
 
 LAST_TRADING_DECISIONS = []
 
-async def validate_and_intercept_trades(tool, args, tool_context) -> dict | None:
-    """Interceptor callback (Double Guardrail + Dry Run) for trading execution."""
-    print(f"   [DEBUG INTERCEPT] Tool '{tool.name}' called with args: {args}")
-    # 1. Enforce Robinhood Account Restriction
-    account_keys = [k for k in args.keys() if "account" in k.lower()]
-    for key in account_keys:
-        val = args.get(key)
-        if val:
-            val_str = str(val).strip()
-            if not val_str.endswith("48661"):
-                raise ValueError(
-                    f"Security Exception: Operation rejected. Tool '{tool.name}' attempted to access "
-                    f"unauthorized account '{val_str}'. All actions are restricted to account ending in 48661."
-                )
-
-    # 2. Enforce Predefined 10-Asset Universe
-    ticker_keys = [k for k in args.keys() if "symbol" in k.lower() or "ticker" in k.lower()]
-    ALLOWED_TICKERS = set(get_allowed_tickers())
-    for key in ticker_keys:
-        val = args.get(key)
-        if val:
-            if isinstance(val, (list, tuple)):
-                tickers_to_check = val
-            elif isinstance(val, str):
-                if "," in val:
-                    tickers_to_check = [t.strip() for t in val.split(",")]
-                else:
-                    tickers_to_check = [val]
-            else:
-                tickers_to_check = [str(val)]
-                
-            for ticker in tickers_to_check:
-                ticker_str = str(ticker).strip().upper()
-                if ticker_str and ticker_str not in ALLOWED_TICKERS:
-                    raise ValueError(
-                        f"Security Exception: Operation rejected. Ticker '{ticker_str}' is outside the authorized asset universe."
-                    )
-
-    # 3. Dry-Run Interceptor: block order modifications and return simulated success
-    if os.environ.get("SKIP_LIVE_TRADES", "false").lower() == "true":
-        tool_name = tool.name.lower()
-        if "insert_trade_record" not in tool_name:
-            if any(action in tool_name for action in ["order", "buy", "sell", "trade", "execute", "cancel"]):
-                print(f"[DRY_RUN] Intercepted trade order tool '{tool.name}' with args: {args}")
-                return {
-                    "status": "success",
-                    "message": f"[DRY_RUN] Simulated execution successfully for {tool.name}",
-                    "order_id": "dry-run-mock-order-id-12345",
-                    "simulated": True
-                }
-
-    return None
-
-
-
-async def execute_trading_decisions(
+async def financial_analysis_pipeline(
     ranked_portfolio: list, 
     graveyard_rows: list | None = None, 
     dataset_id: str = "portfolio_analytics"
@@ -322,19 +245,16 @@ async def execute_trading_decisions(
     then executes trades using ExecutionController and logs snapshot/trades to BigQuery."""
     from app.tools.bigquery_service import get_historical_metrics
     from app.execution import ExecutionController
+    from app.tools.robinhood_service import fetch_robinhood_portfolio_state
 
     # 1. Fetch weekly historical signals log
     weekly_metrics = get_historical_metrics(days=7, dataset_id=dataset_id)
     
-    # Clear INTEGRATION_TEST to allow the McpToolset to connect
+    # Clear INTEGRATION_TEST to allow the Robinhood MCP toolset to connect
     if "INTEGRATION_TEST" in os.environ:
         del os.environ["INTEGRATION_TEST"]
 
-    # 2. Fetch current holdings and cash from Robinhood to initialize loop state
-    print("\nFetching current portfolio state from Robinhood...")
-    total_cash = 100.0
-    holdings = []
-    
+    # Resolve target account ending in 48661 from environment variables
     account_number = os.environ.get("ROBINHOOD_ACCOUNT_NUMBER")
     if not account_number:
         if os.environ.get("SKIP_LIVE_TRADES", "false").lower() == "true":
@@ -345,55 +265,9 @@ async def execute_trading_decisions(
     if not account_number or not str(account_number).endswith("48661"):
         raise RuntimeError(f"Security Guardrail: Unauthorized Robinhood account '{account_number}'. All operations restricted to accounts ending in 48661.")
 
-    try:
-        tools = await robinhood_toolset.get_tools()
-        tools_dict = {t.name: t for t in tools}
-
-        if "get_portfolio" in tools_dict:
-            try:
-                port_res = await tools_dict["get_portfolio"].run_async(args={"account_number": account_number}, tool_context=None)
-                data = port_res.get("structuredContent", {}).get("data", {})
-                total_cash = float(data.get("cash", 100.0))
-            except Exception as e:
-                print(f"   [ERROR] get_portfolio failed: {e}")
-
-        if "get_equity_positions" in tools_dict:
-            try:
-                pos_res = await tools_dict["get_equity_positions"].run_async(args={"account_number": account_number}, tool_context=None)
-                positions = pos_res.get("structuredContent", {}).get("data", {}).get("positions", [])
-                
-                active_symbols = []
-                symbol_shares = {}
-                symbol_cost = {}
-                
-                for pos in positions:
-                    qty = float(pos.get("quantity", 0))
-                    if qty > 0:
-                        sym = pos["symbol"]
-                        active_symbols.append(sym)
-                        symbol_shares[sym] = qty
-                        symbol_cost[sym] = float(pos.get("average_buy_price", 0))
-
-                if active_symbols and "get_equity_quotes" in tools_dict:
-                    quotes_res = await tools_dict["get_equity_quotes"].run_async(args={"symbols": active_symbols}, tool_context=None)
-                    results = quotes_res.get("structuredContent", {}).get("data", {}).get("results", [])
-                    for res in results:
-                        quote = res.get("quote", {})
-                        sym = quote.get("symbol")
-                        if sym in symbol_shares:
-                            price = float(quote.get("last_non_reg_trade_price") or quote.get("last_trade_price") or 0.0)
-                            qty = symbol_shares[sym]
-                            holdings.append({
-                                "symbol": sym,
-                                "shares": qty,
-                                "average_buy_price": symbol_cost[sym],
-                                "current_price": price,
-                                "equity": qty * price
-                            })
-            except Exception as e:
-                print(f"   [ERROR] get_equity_positions failed: {e}")
-    except Exception as e:
-        print(f"   Warning: Failed to fetch live portfolio state: {e}")
+    # 2. Fetch current holdings and cash from Robinhood to initialize loop state
+    print("\nFetching current portfolio state from Robinhood...")
+    total_cash, holdings = await fetch_robinhood_portfolio_state(account_number)
 
     # Compute starting Total Equity and weights
     holdings_value = sum(h["equity"] for h in holdings)
@@ -519,6 +393,7 @@ async def execute_trading_decisions(
     # 5. Log post-trade portfolio snapshot to BigQuery
     print("\nLogging portfolio snapshot to BigQuery...")
     try:
+        from app.tools.robinhood_service import log_portfolio_snapshot
         await log_portfolio_snapshot(dataset_id=dataset_id)
         print("   Portfolio snapshot logged successfully.")
     except Exception as e:
@@ -536,102 +411,6 @@ async def execute_trading_decisions(
             print(f"   Warning: Failed to write unified metrics to BigQuery: {e}")
 
     return ranked_portfolio
-
-
-async def log_portfolio_snapshot(dataset_id: str = "portfolio_analytics") -> None:
-    """Queries Robinhood MCP tools for current equity, cash, and holdings,
-    and inserts a snapshot record into BigQuery."""
-    import json
-    from datetime import datetime, timezone
-    from app.tools.bigquery_service import insert_portfolio_snapshot
-
-    # 1. Fetch available tools from remote server
-    try:
-        tools = await robinhood_toolset.get_tools()
-        tools_dict = {t.name: t for t in tools}
-    except Exception as e:
-        print(f"   Warning: Could not fetch MCP tools: {e}")
-        return
-
-    # Resolve target account ending in 48661 from environment variables
-    account_number = os.environ.get("ROBINHOOD_ACCOUNT_NUMBER")
-    if not account_number:
-        if os.environ.get("SKIP_LIVE_TRADES", "false").lower() == "true":
-            account_number = "MOCK_ACCOUNT_48661"
-        else:
-            raise RuntimeError("Security Guardrail: ROBINHOOD_ACCOUNT_NUMBER environment variable is not set.")
-
-    if not account_number or not str(account_number).endswith("48661"):
-        raise RuntimeError(f"Security Guardrail: Unauthorized Robinhood account '{account_number}'. All operations restricted to accounts ending in 48661.")
-
-    # 2. Query portfolio metrics
-    total_equity = 100.0
-    total_cash = 100.0
-    
-    if "get_portfolio" in tools_dict:
-        try:
-            port_res = await tools_dict["get_portfolio"].run_async(args={"account_number": account_number}, tool_context=None)
-            data = port_res.get("structuredContent", {}).get("data", {})
-            total_equity = float(data.get("total_value", 100.0))
-            total_cash = float(data.get("cash", 100.0))
-        except Exception:
-            pass
-
-    # Calculate gain/loss from the base $100 budget
-    unrealized_gain_loss = total_equity - 100.0
-    unrealized_gain_loss_percent = (unrealized_gain_loss / 100.0) * 100.0
-
-    # 3. Query positions and quotes
-    holdings = []
-    if "get_equity_positions" in tools_dict:
-        try:
-            pos_res = await tools_dict["get_equity_positions"].run_async(args={"account_number": account_number}, tool_context=None)
-            positions = pos_res.get("structuredContent", {}).get("data", {}).get("positions", [])
-            
-            active_symbols = []
-            symbol_shares = {}
-            symbol_cost = {}
-            
-            for pos in positions:
-                qty = float(pos.get("quantity", 0))
-                if qty > 0:
-                    sym = pos["symbol"]
-                    active_symbols.append(sym)
-                    symbol_shares[sym] = qty
-                    symbol_cost[sym] = float(pos.get("average_buy_price", 0))
-
-            # Fetch live prices for active holdings
-            if active_symbols and "get_equity_quotes" in tools_dict:
-                quotes_res = await tools_dict["get_equity_quotes"].run_async(args={"symbols": active_symbols}, tool_context=None)
-                results = quotes_res.get("structuredContent", {}).get("data", {}).get("results", [])
-                for res in results:
-                    quote = res.get("quote", {})
-                    sym = quote.get("symbol")
-                    if sym in symbol_shares:
-                        # Find price, checking both trade and non-reg trade prices
-                        price = float(quote.get("last_non_reg_trade_price") or quote.get("last_trade_price") or 0.0)
-                        qty = symbol_shares[sym]
-                        equity_val = qty * price
-                        holdings.append({
-                            "symbol": sym,
-                            "shares": qty,
-                            "average_buy_price": symbol_cost[sym],
-                            "current_price": price,
-                            "equity": equity_val
-                        })
-        except Exception:
-            pass
-
-    snapshot = {
-        "account_number": f"••••{account_number[-5:]}" if len(account_number) >= 5 else account_number,
-        "total_equity": total_equity,
-        "total_cash": total_cash,
-        "unrealized_gain_loss": unrealized_gain_loss,
-        "unrealized_gain_loss_percent": unrealized_gain_loss_percent,
-        "holdings": json.dumps(holdings)
-    }
-
-    insert_portfolio_snapshot(snapshot, dataset_id=dataset_id)
 
 
 # Define tools list, conditionally adding robinhood_toolset if not in a test environment

@@ -122,6 +122,103 @@ The frontend runs as a containerized service deployed to **Google Cloud Run**.
 
 ---
 
+## 🚀 Running the Pipeline & Deployment
+
+This section provides all necessary setup, run, and deployment details to run the system or continue development.
+
+### 📦 Prerequisites & Local Installation
+
+1. **Install uv**: Install Astral's fast Python package manager and installer:
+   - **macOS/Linux**: `curl -LsSf https://astral.sh/uv/install.sh | sh`
+   - **Windows (PowerShell)**: `irm https://astral.sh/uv/install.ps1 | iex`
+   - **Homebrew**: `brew install uv`
+2. **Install Google Cloud SDK**: Required for database interactions (BigQuery) and frontend hosting (Cloud Run):
+   - Follow instructions on [Google Cloud SDK installation](https://cloud.google.com/sdk/docs/install).
+3. **Install Vertex AI Agent CLI (agents-cli)**: Required for backend agent deployment:
+   ```bash
+   uv tool install google-agents-cli
+   ```
+4. **Compile / Synchronize Virtual Environment**: Set up the local Python 3.12 environment, locking dependencies and checking for type/package consistency:
+   ```bash
+   cd agent
+   uv sync
+   ```
+2. **Environment Variables**: Create a `.env` file in the project root or copy the template:
+   ```ini
+   # Vertex AI or Gemini API key configuration
+   GEMINI_API_KEY=your_gemini_api_key_here
+   
+   # Robinhood MCP parameters
+   ROBINHOOD_MCP_URL=http://localhost:8000/robinhood
+   ROBINHOOD_ACCOUNT_NUMBER=XXXXX48661  # Security guardrail target account
+   
+   # Execution Flags
+   SKIP_LIVE_TRADES=true   # Set to false to perform real trades
+   SKIP_INGESTION=false    # Set to true to query today's BQ logs instead of re-scraping yfinance
+   ```
+
+### 🚦 Running the Code
+
+* **Run pytest Suite**: Verify code health and imports.
+  ```bash
+  cd agent
+  uv run python -m pytest
+  ```
+* **Run Daily Ingestion & Trading Pipeline**: Runs technical screening, news scraping, LLM sentiment ranking, LoopAgent rebalancing debate, and sequential order execution:
+  ```bash
+  cd agent
+  uv run run_pipeline.py
+  ```
+* **Run Pipeline Skipping Ingestion (Dry-run Debugging)**: Bypass scraping and go straight to execution using cached today's BigQuery metrics:
+  ```bash
+  cd agent
+  SKIP_INGESTION=true uv run run_pipeline.py
+  ```
+* **Run Streamlit Dashboard Locally**:
+  ```bash
+  cd frontend
+  uv run streamlit run app.py
+  ```
+
+---
+
+### 🌐 Cloud Deployment
+
+#### 1. Backend Agent (Agent Runtime)
+The trading agent orchestrator is built using the Vertex AI Agent Development Kit (ADK). The deployment target is **Agent Runtime** (Vertex AI Agent Engine) under region `us-east1` as specified in `agent/agents-cli-manifest.yaml`.
+
+* **Prerequisite**: Install `agents-cli` globally:
+  ```bash
+  uv tool install google-agents-cli
+  ```
+* **Deploy Command**:
+  ```bash
+  cd agent
+  agents-cli deploy
+  ```
+
+#### 2. Frontend Dashboard (Google Cloud Run)
+The frontend Streamlit app is containerized via `frontend/Dockerfile` and serves on port `8080`.
+
+* **Build & Deploy Command**:
+  ```bash
+  # Deploy directly from source directory
+  gcloud run deploy portfolio-dashboard \
+    --source ./frontend \
+    --region us-central1 \
+    --allow-unauthenticated
+  ```
+* **GCP Infrastructure & Data Warehouse (BigQuery)**:
+  - BigQuery Dataset: `portfolio_analytics`
+  - Tables:
+    * `infrastructure_market_metrics`: Daily watches, technical indicators (RSI/MACD/SMA), and Gemini sentiment analysis outputs.
+    * `trade_history`: Detailed execution logs of sequential orders.
+    * `portfolio_snapshot`: Portfolio total equity, cash, and JSON-encoded holdings.
+  - Initialized automatically on startup via `setup_bigquery()` in [bigquery_service.py](file:///Users/sagar/Documents/ML/stock-trader/agent/app/tools/bigquery_service.py).
+  - IAM Permissions: Make sure the service account running the Cloud Run Streamlit dashboard has `BigQuery Admin` or `BigQuery Data Editor` + `BigQuery Job User` roles.
+
+---
+
 ## 📋 Open TODO List 
 
 To complete your Kaggle Capstone Project submission, you must perform the following actions:
@@ -155,3 +252,24 @@ To complete your Kaggle Capstone Project submission, you must perform the follow
 
 *  # Redacted target account format: select account ending in 48661
         account_number = "XXXXX48661"  # Default fallback.. is this safe?
+
+
+Issues & Recommendations
+AnalystProposal is defined twice — you redeclare the class at line ~148 with an added decisions field, silently shadowing the first definition. Python won't error, but this is a latent bug that will confuse anyone reading the code. Remove the first definition entirely.
+
+Prompt templates use string interpolation with .format() implicitly but aren't actually formatted — ANALYST_INSTRUCTION contains {total_equity}, {ranked_portfolio}, etc., but these are passed as static strings to Agent(instruction=...). The actual runtime values from session.state are never injected. You need to either:
+
+Build the instruction dynamically inside financial_analysis_pipeline() using .format(**initial_state), or
+
+Use ADK's session state templating if supported (verify in your ADK version)
+
+analyze_and_rank_portfolio creates a new Runner/InMemorySessionService on every call — this works but is heavyweight. If this tool is called repeatedly, consider a shared session pool or passing the parent runner's session service.
+
+LAST_TRADING_DECISIONS = [] is declared but never used — remove dead code to reduce confusion.
+
+sys import is mid-file — import sys appears after substantial class definitions. Move all stdlib imports to the top with the other imports.
+
+root_agent instruction is a generic placeholder — "You are a helpful AI assistant..." doesn't describe its actual role as a trading orchestrator. This matters because the model uses the instruction to decide when/how to invoke analyze_and_rank_portfolio and the Robinhood toolset.
+
+No retry/fallback if the loop hits max_iterations without approval — currently financial_analysis_pipeline() just returns ranked_portfolio with a critical error log but continues to ExecutionController. You should either raise an exception or short-circuit before calling execute_rebalance if proposal is None.
+
