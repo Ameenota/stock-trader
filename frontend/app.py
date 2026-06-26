@@ -462,9 +462,12 @@ with m1:
         delta=f"{snap['unrealized_gain_loss_percent']:.2f}% Total Return"
     )
 with m2:
+    pending_cash = max(0.0, snap['total_cash'] - snap['buying_power'])
     st.metric(
         label="Settled Cash (Buying Power)",
-        value=f"${snap['buying_power']:.2f}"
+        value=f"${snap['buying_power']:.2f}",
+        delta=f"${pending_cash:.2f} Pending" if pending_cash > 0.01 else "No Pending Cash",
+        delta_color="off"
     )
 with m3:
     gain_loss = snap['unrealized_gain_loss']
