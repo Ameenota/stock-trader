@@ -17,6 +17,16 @@ import os
 import sys
 from datetime import datetime, timezone
 
+# Terminal colors for beautiful outputs
+CLR_RESET = "\033[0m"
+CLR_BOLD = "\033[1m"
+CLR_RED = "\033[91m"
+CLR_GREEN = "\033[92m"
+CLR_YELLOW = "\033[93m"
+CLR_BLUE = "\033[94m"
+CLR_MAGENTA = "\033[95m"
+CLR_CYAN = "\033[96m"
+
 # Add current directory to python path to allow importing app module
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -49,13 +59,13 @@ from app.tools.data_ingestion import print_portfolio_table, run_sentiment_analys
 from app.agent import financial_analysis_pipeline
 
 async def run_pipeline(dataset_id: str = "portfolio_analytics") -> None:
-    print(f"[{datetime.now(timezone.utc).isoformat()}] Starting AI Infrastructure Analyst pipeline...")
+    print(f"{CLR_BOLD}{CLR_BLUE}[{datetime.now(timezone.utc).isoformat()}] Starting AI Infrastructure Analyst pipeline...{CLR_RESET}")
 
     # Step 1: Initialize BigQuery Dataset and Tables
-    print(f"\n[PHASE: 1. Setup BigQuery Database]")
+    print(f"\n{CLR_BOLD}{CLR_CYAN}🗄️ [PHASE: 1. Setup BigQuery Database]{CLR_RESET}")
     print(f"   Initializing BigQuery dataset '{dataset_id}' and validating schemas...")
     setup_bigquery(dataset_id=dataset_id)
-    print("   BigQuery verification complete.")
+    print(f"   {CLR_GREEN}BigQuery verification complete.{CLR_RESET}")
 
     # Determine if we skip ingestion (from env or if BQ today has records)
     skip_ingestion = os.environ.get("SKIP_INGESTION", "false").lower() == "true"
@@ -64,13 +74,13 @@ async def run_pipeline(dataset_id: str = "portfolio_analytics") -> None:
     graveyard_rows = None
     
     if skip_ingestion:
-        print("\n[SKIP_INGESTION] Checking BigQuery for today's market metrics...")
+        print(f"\n{CLR_YELLOW}[SKIP_INGESTION] Checking BigQuery for today's market metrics...{CLR_RESET}")
         today_metrics = get_latest_market_metrics(dataset_id=dataset_id)
         if today_metrics:
-            print(f"   Bypassing ingestion. Found {len(today_metrics)} existing metrics for today.")
+            print(f"   {CLR_GREEN}Bypassing ingestion. Found {len(today_metrics)} existing metrics for today.{CLR_RESET}")
             ranked_portfolio = today_metrics
         else:
-            print("   Warning: SKIP_INGESTION was true but no daily metrics found in BigQuery. Running ingestion...")
+            print(f"   {CLR_YELLOW}Warning: SKIP_INGESTION was true but no daily metrics found in BigQuery. Running ingestion...{CLR_RESET}")
             skip_ingestion = False
 
     if not skip_ingestion:
@@ -83,7 +93,7 @@ async def run_pipeline(dataset_id: str = "portfolio_analytics") -> None:
         graveyard_rows=graveyard_rows,
         dataset_id=dataset_id
     )
-    print("\n[PHASE: Complete] Portfolio execution and logs finalized.")
+    print(f"\n{CLR_BOLD}{CLR_GREEN}🚀 [PHASE: Complete] Portfolio execution and logs finalized.{CLR_RESET}")
 
     # Print final portfolio table (now with Trading Agent signals & theses!)
     print_portfolio_table(final_portfolio)

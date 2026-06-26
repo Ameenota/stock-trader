@@ -19,6 +19,16 @@ import json
 from datetime import datetime, timezone
 from app.tools.bigquery_service import insert_trade_record
 
+# Terminal colors for beautiful outputs
+CLR_RESET = "\033[0m"
+CLR_BOLD = "\033[1m"
+CLR_RED = "\033[91m"
+CLR_GREEN = "\033[92m"
+CLR_YELLOW = "\033[93m"
+CLR_BLUE = "\033[94m"
+CLR_MAGENTA = "\033[95m"
+CLR_CYAN = "\033[96m"
+
 class ExecutionController:
     def __init__(self, toolset, account_number: str, dataset_id: str = "portfolio_analytics"):
         self.toolset = toolset
@@ -28,7 +38,7 @@ class ExecutionController:
     async def execute_rebalance(self, approved_allocations: list) -> None:
         """Calculates trade deltas based on approved allocations and total equity,
         respects tolerance bands, executes sells first then buys, and logs to BigQuery."""
-        print("\n=== Execution Controller: Starting Portfolio Rebalancing ===")
+        print(f"\n{CLR_BOLD}{CLR_GREEN}=== Execution Controller: Starting Portfolio Rebalancing ==={CLR_RESET}")
         
         # Filter out CASH and USD pseudo-allocations
         approved_allocations = [
@@ -102,9 +112,9 @@ class ExecutionController:
             })
 
         total_equity = total_cash + holdings_value
-        print(f"Live Cash Balance: ${total_cash:.2f}")
-        print(f"Live Holdings Value: ${holdings_value:.2f}")
-        print(f"Total Portfolio Equity: ${total_equity:.2f}")
+        print(f"   Live Cash Balance: {CLR_GREEN}${total_cash:.2f}{CLR_RESET}")
+        print(f"   Live Holdings Value: ${holdings_value:.2f}")
+        print(f"   Total Portfolio Equity: {CLR_BOLD}{CLR_GREEN}${total_equity:.2f}{CLR_RESET}")
 
         # Calculate current weight percentages
         current_weights = {}
@@ -127,7 +137,7 @@ class ExecutionController:
 
             # If price is 0, we cannot trade
             if price <= 0:
-                print(f"   [WARNING] Price for {ticker} is 0 or missing. Skipping.")
+                print(f"   {CLR_YELLOW}[WARNING] Price for {ticker} is 0 or missing. Skipping.{CLR_RESET}")
                 continue
 
             delta_pct = tgt_pct - cur_pct
@@ -136,7 +146,7 @@ class ExecutionController:
             # If current weight is within +/- 3% of the target, do not adjust,
             # UNLESS complete liquidation (target is 0) or brand new purchase (current is 0)
             if tgt_pct > 0.0 and cur_pct > 0.0 and abs(delta_pct) <= 0.03:
-                print(f"   [TOLERANCE] Ticker {ticker} is at {cur_pct*100:.1f}%, target {tgt_pct*100:.1f}% (within 3% band). Skipping rebalance.")
+                print(f"   {CLR_BLUE}[TOLERANCE] Ticker {ticker} is at {cur_pct*100:.1f}%, target {tgt_pct*100:.1f}% (within 3% band). Skipping rebalance.{CLR_RESET}")
                 continue
 
             delta_usd = delta_pct * total_equity
@@ -177,11 +187,11 @@ class ExecutionController:
             reason = sell["reasoning"]
             shares_str = f"{shares:.6f}"
             
-            print(f"\n[EXECUTION] Selling {shares_str} shares of {ticker} (${amt:.2f}). Reason: {reason}")
+            print(f"\n{CLR_BOLD}{CLR_RED}[EXECUTION] Selling {shares_str} shares of {ticker} (${amt:.2f}). Reason: {reason}{CLR_RESET}")
             
             # Enforce double account guardrails & dry-run interceptor
             if os.environ.get("SKIP_LIVE_TRADES", "false").lower() == "true":
-                print(f"[DRY_RUN] Intercepted place_equity_order and simulated success for {ticker}")
+                print(f"{CLR_YELLOW}[DRY_RUN] Intercepted place_equity_order and simulated success for {ticker}{CLR_RESET}")
                 action = "LIQUIDATE" if sell["liquidate"] else "SELL"
                 insert_trade_record(
                     ticker=ticker,
@@ -216,7 +226,7 @@ class ExecutionController:
                             dataset_id=self.dataset_id
                         )
                     except Exception as e:
-                        print(f"   [ERROR] Place sell order failed: {e}")
+                        print(f"   {CLR_RED}[ERROR] Place sell order failed: {e}{CLR_RESET}")
 
         # Calculate spendable buying power
         is_dry_run = os.environ.get("SKIP_LIVE_TRADES", "false").lower() == "true"
@@ -232,7 +242,7 @@ class ExecutionController:
 
         should_execute_buys = True
         if buys and total_buy_usd_needed > max_spend:
-            print(f"\n[BUY POWER GUARD] Total buy needed (${total_buy_usd_needed:.2f}) exceeds spendable buying power (${max_spend:.2f}, based on buying power of ${effective_buying_power:.2f} and minimum cash reserve of ${min_cash_reserve:.2f}).")
+            print(f"\n{CLR_BOLD}{CLR_RED}[BUY POWER GUARD] Total buy needed (${total_buy_usd_needed:.2f}) exceeds spendable buying power (${max_spend:.2f}, based on buying power of ${effective_buying_power:.2f} and minimum cash reserve of ${min_cash_reserve:.2f}).{CLR_RESET}")
             print("Skipping all buy orders in this run to prevent buying power overdraft. Buys will execute in a future run once cash settles.")
             should_execute_buys = False
 
@@ -250,11 +260,11 @@ class ExecutionController:
                 reason = buy["reasoning"]
                 shares_str = f"{shares:.6f}"
                 
-                print(f"\n[EXECUTION] Buying {shares_str} shares of {ticker} (${buy['amount_usd']:.2f}). Reason: {reason}")
+                print(f"\n{CLR_BOLD}{CLR_GREEN}[EXECUTION] Buying {shares_str} shares of {ticker} (${buy['amount_usd']:.2f}). Reason: {reason}{CLR_RESET}")
                 
                 # Enforce double account guardrails & dry-run interceptor
                 if os.environ.get("SKIP_LIVE_TRADES", "false").lower() == "true":
-                    print(f"[DRY_RUN] Intercepted place_equity_order and simulated success for {ticker}")
+                    print(f"{CLR_YELLOW}[DRY_RUN] Intercepted place_equity_order and simulated success for {ticker}{CLR_RESET}")
                     insert_trade_record(
                         ticker=ticker,
                         action="BUY",
@@ -287,9 +297,9 @@ class ExecutionController:
                                 dataset_id=self.dataset_id
                             )
                         except Exception as e:
-                            print(f"   [ERROR] Place buy order failed: {e}")
+                            print(f"   {CLR_RED}[ERROR] Place buy order failed: {e}{CLR_RESET}")
         else:
-            print("\nBuys skipped in this run.")
+            print(f"\n{CLR_YELLOW}Buys skipped in this run.{CLR_RESET}")
 
-        print("\nAll trade executions completed.")
-        print("=========================================================\n")
+        print(f"\n{CLR_GREEN}All trade executions completed.{CLR_RESET}")
+        print(f"{CLR_BOLD}{CLR_GREEN}========================================================={CLR_RESET}\n")

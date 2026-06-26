@@ -18,6 +18,16 @@ import pandas as pd
 import pandas_ta as ta
 import yfinance as yf
 
+# Terminal colors for beautiful outputs
+CLR_RESET = "\033[0m"
+CLR_BOLD = "\033[1m"
+CLR_RED = "\033[91m"
+CLR_GREEN = "\033[92m"
+CLR_YELLOW = "\033[93m"
+CLR_BLUE = "\033[94m"
+CLR_MAGENTA = "\033[95m"
+CLR_CYAN = "\033[96m"
+
 from app.tools.ticker_universe import get_active_tickers
 
 # Predefined list of 9 AI infrastructure stocks + 1 market hedge ETF
@@ -243,7 +253,7 @@ def ingest_market_data(tickers: List[str] | None = None, current_time: float | N
 def print_portfolio_table(portfolio: list) -> None:
     """Renders a beautiful ASCII table of the ranked portfolio and trade signals."""
     print("\n" + "="*175)
-    print(f"{'Ticker':<6} | {'Score':<6} | {'Rank':<5} | {'Signal':<11} | {'Price':<8} | {'20d SMA':<8} | {'Price/MA':<8} | {'RSI':<6} | {'MACD':<8} | {'MACD Sig':<8} | {'Consensus':<10} | {'Thesis'}")
+    print(f"{CLR_BOLD}{CLR_BLUE}{'Ticker':<6} | {'Score':<6} | {'Rank':<5} | {'Signal':<11} | {'Price':<8} | {'20d SMA':<8} | {'Price/MA':<8} | {'RSI':<6} | {'MACD':<8} | {'MACD Sig':<8} | {'Consensus':<10} | {'Thesis'}{CLR_RESET}")
     print("="*175)
     for item in portfolio:
         thesis = item.get("thesis", "")
@@ -263,7 +273,29 @@ def print_portfolio_table(portfolio: list) -> None:
         macd_sig_str = f"{macd_sig:.3f}" if macd_sig is not None else "N/A"
         consensus = item.get("analyst_consensus") or "N/A"
         
-        print(f"{item['ticker']:<6} | {item['raw_score']:<6.2f} | {item['relative_rank']:<5} | {item['signal']:<11} | {price_str:<8} | {ma_str:<8} | {ratio_str:<8} | {rsi_str:<6} | {macd_str:<8} | {macd_sig_str:<8} | {consensus:<10} | {truncated_thesis}")
+        signal = item.get("signal", "")
+        signal_val = f"{signal:<11}"
+        if "STRONG BUY" in signal:
+            signal_display = f"{CLR_BOLD}{CLR_GREEN}{signal_val}{CLR_RESET}"
+        elif "LIQUIDATE" in signal:
+            signal_display = f"{CLR_BOLD}{CLR_RED}{signal_val}{CLR_RESET}"
+        elif "HOLD" in signal:
+            signal_display = f"{CLR_BOLD}{CLR_YELLOW}{signal_val}{CLR_RESET}"
+        else:
+            signal_display = signal_val
+            
+        score = item.get("raw_score", 0.0)
+        score_val = f"{score:+.2f}"
+        if score > 0:
+            score_display = f"{CLR_GREEN}{score_val:<6}{CLR_RESET}"
+        elif score < 0:
+            score_display = f"{CLR_RED}{score_val:<6}{CLR_RESET}"
+        else:
+            score_display = f"{score_val:<6}"
+            
+        ticker_display = f"{CLR_BOLD}{item['ticker']:<6}{CLR_RESET}"
+        
+        print(f"{ticker_display} | {score_display} | {item['relative_rank']:<5} | {signal_display} | {price_str:<8} | {ma_str:<8} | {ratio_str:<8} | {rsi_str:<6} | {macd_str:<8} | {macd_sig_str:<8} | {consensus:<10} | {truncated_thesis}")
     print("="*175 + "\n")
 
 
@@ -280,7 +312,7 @@ async def run_sentiment_analysis_pipeline(dataset_id: str = "portfolio_analytics
     from app.tools.ticker_universe import determine_active_watchlist
 
     # 1. Dynamically determine the watchlist and get details for all universe assets
-    print("\n[PHASE: 2. Ingestion & Watchlist Screening]")
+    print(f"\n{CLR_BOLD}{CLR_CYAN}📥 [PHASE: 2. Ingestion & Watchlist Screening]{CLR_RESET}")
     print("   Determining active watchlist from 40-asset universe...")
     active_tickers, all_tickers_details = await determine_active_watchlist(dataset_id=dataset_id, return_details=True)
     print(f"   Active watchlist generated: {active_tickers}")
@@ -288,12 +320,12 @@ async def run_sentiment_analysis_pipeline(dataset_id: str = "portfolio_analytics
 
     # 2. Ingest latest market news and metrics only for the active watchlist
     market_data = ingest_market_data(tickers=active_tickers)
-    print(f"   Yahoo Finance ingestion complete for {len(market_data)} tickers.")
-    print("[PHASE: 2. Exit]")
+    print(f"   {CLR_GREEN}Yahoo Finance ingestion complete for {len(market_data)} tickers.{CLR_RESET}")
+    print(f"{CLR_BOLD}{CLR_CYAN}📥 [PHASE: 2. Exit]{CLR_RESET}")
 
     # 3. Run sentiment agent sub-session
-    print("\n[PHASE: 3. Sentiment Analysis via Gemini]")
-    print("   Invoking SENTIMENT_AGENT (Gemini) to evaluate news sentiment...")
+    print(f"\n{CLR_BOLD}{CLR_MAGENTA}🧠 [PHASE: 3. Sentiment Analysis via Gemini]{CLR_RESET}")
+    print(f"   Invoking {CLR_BOLD}{CLR_MAGENTA}SENTIMENT_AGENT{CLR_RESET} (Gemini) to evaluate news sentiment...")
     session_service = InMemorySessionService()
     session = await session_service.create_session(user_id="cron_job", app_name="sentiment")
     runner = Runner(agent=sentiment_agent, session_service=session_service, app_name="sentiment")
@@ -319,7 +351,7 @@ async def run_sentiment_analysis_pipeline(dataset_id: str = "portfolio_analytics
 
     from app.tools.ranking import SentimentAnalysisResponse
     # Print the specific outputs returned by the Sentiment Agent
-    print("   SENTIMENT_AGENT: Completed news sentiment analysis:")
+    print(f"   🤖 {CLR_BOLD}{CLR_MAGENTA}SENTIMENT_AGENT{CLR_RESET}: Completed news sentiment analysis:")
     analyses_list = []
     if isinstance(sentiment_result, SentimentAnalysisResponse):
         analyses_list = sentiment_result.analyses
@@ -331,11 +363,18 @@ async def run_sentiment_analysis_pipeline(dataset_id: str = "portfolio_analytics
     for item in analyses_list:
         ticker = getattr(item, "ticker") if not isinstance(item, dict) else item.get("ticker")
         score = getattr(item, "raw_score") if not isinstance(item, dict) else item.get("raw_score")
-        print(f"      - {ticker}: conviction score = {score:+.2f}")
+        score_val = float(score)
+        if score_val > 0:
+            score_str = f"{CLR_GREEN}{score_val:+.2f}{CLR_RESET}"
+        elif score_val < 0:
+            score_str = f"{CLR_RED}{score_val:+.2f}{CLR_RESET}"
+        else:
+            score_str = f"{score_val:+.2f}"
+        print(f"      - {ticker}: conviction score = {score_str}")
 
     # 4. Sort, rank and assign signals
     ranked_portfolio = process_sentiment_rankings(sentiment_result)
-    print("[PHASE: 3. Exit]")
+    print(f"{CLR_BOLD}{CLR_MAGENTA}🧠 [PHASE: 3. Exit]{CLR_RESET}")
 
     # 4. Attach raw news and technical metrics for auditing
     current_time_str = datetime.now(timezone.utc).isoformat()
@@ -399,7 +438,7 @@ async def run_sentiment_analysis_pipeline(dataset_id: str = "portfolio_analytics
                 "macd_signal": None
             })
     except Exception as e:
-        print(f"   Warning: Failed to ingest SPY: {e}")
+        print(f"   {CLR_YELLOW}Warning: Failed to ingest SPY: {e}{CLR_RESET}")
 
     # Return both ranked portfolio and graveyard rows to the orchestrator to log after execution
     return ranked_portfolio, graveyard_rows

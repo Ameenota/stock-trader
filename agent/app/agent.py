@@ -25,6 +25,16 @@ from google.adk.events import Event, EventActions
 from google.adk.agents.invocation_context import InvocationContext
 from google.adk.agents.callback_context import CallbackContext
 
+# Terminal colors for beautiful outputs
+CLR_RESET = "\033[0m"
+CLR_BOLD = "\033[1m"
+CLR_RED = "\033[91m"
+CLR_GREEN = "\033[92m"
+CLR_YELLOW = "\033[93m"
+CLR_BLUE = "\033[94m"
+CLR_MAGENTA = "\033[95m"
+CLR_CYAN = "\033[96m"
+
 # Set to True to use Vertex AI (GCP), or False to use Google AI Studio (GEMINI_API_KEY)
 USE_VERTEX_AI = True
 
@@ -199,11 +209,15 @@ class EscalationChecker(BaseAgent):
                 feedback = getattr(critique, "feedback", "No feedback yet.")
 
         if approved:
-            print(f"\nESCALATION_CHECKER: (replied with:) Critique APPROVED. Feedback: {feedback}")
-            print("ESCALATION_CHECKER: Escalating to break loop...")
+            print(f"🚨 {CLR_BOLD}{CLR_RED}########################## ESCALATION_CHECKER ##########################{CLR_RESET}")
+            print(f"Critique {CLR_BOLD}{CLR_GREEN}APPROVED{CLR_RESET}. Feedback: {feedback}")
+            print("Escalating to break loop...")
+            print(f"{CLR_RED}###########################################################################{CLR_RESET}\n")
             yield Event(author=self.name, actions=EventActions(escalate=True))
         else:
-            print(f"\nESCALATION_CHECKER: (replied with:) Critique REJECTED. Continuing loop. Feedback: {feedback}")
+            print(f"🚨 {CLR_BOLD}{CLR_RED}########################## ESCALATION_CHECKER ##########################{CLR_RESET}")
+            print(f"Critique {CLR_BOLD}{CLR_RED}REJECTED{CLR_RESET}. Continuing loop. Feedback: {feedback}")
+            print(f"{CLR_RED}###########################################################################{CLR_RESET}\n")
             yield Event(author=self.name)
 
 
@@ -316,14 +330,23 @@ async def financial_analysis_pipeline(
         "macd_signal": item.get("macd_signal")
     } for item in ranked_portfolio])
 
-    print(f"   Current Cash: ${total_cash:.2f}")
-    print(f"   Current Holdings: {current_holdings_str}")
+    print(f"   Current Cash: {CLR_GREEN}${total_cash:.2f}{CLR_RESET}")
+    print(f"   Current Holdings: {CLR_BOLD}{current_holdings_str}{CLR_RESET}")
     print(f"   Recent Trades: {recent_trades_str}")
-    print(f"   Total Equity: ${total_equity:.2f}")
+    print(f"   Total Equity: {CLR_BOLD}{CLR_GREEN}${total_equity:.2f}{CLR_RESET}")
 
     # 3. Initialize loop session state and run the Multi-Agent Loop
-    print("\n[PHASE: 4. Entering Multi-Agent Portfolio Debate Loop]")
-    print("   Initializing debate loop with PORTFOLIO_ANALYST, SENIOR_RISK_ADVISOR, and ESCALATION_CHECKER...")
+    print(f"\n{CLR_BOLD}{CLR_CYAN}🔄 [PHASE: 4. Entering Multi-Agent Portfolio Debate Loop]{CLR_RESET}")
+    print(f"   Initializing debate loop with {CLR_BOLD}{CLR_MAGENTA}PORTFOLIO_ANALYST{CLR_RESET}, {CLR_BOLD}{CLR_YELLOW}SENIOR_RISK_ADVISOR{CLR_RESET}, and {CLR_BOLD}{CLR_RED}ESCALATION_CHECKER{CLR_RESET}...")
+
+    print(f"\n📊 {CLR_BOLD}{CLR_CYAN}" + "#" * 26 + " INPUT_CONTEXT " + "#" * 26 + f"{CLR_RESET}")
+    print(f"   - Total Equity: {CLR_BOLD}{CLR_GREEN}${total_equity:.2f}{CLR_RESET}")
+    print(f"   - Current Cash: {CLR_GREEN}${total_cash:.2f}{CLR_RESET} ({current_cash_pct:.1f}% of total equity)")
+    print(f"   - Current Holdings (with days_held): {current_holdings_str}")
+    print(f"   - Recent Trades: {recent_trades_str}")
+    print(f"   - Watchlist Metrics: {watchlist_summary}")
+    print(f"{CLR_BOLD}{CLR_CYAN}" + "#" * 69 + f"{CLR_RESET}\n")
+
     session_service = InMemorySessionService()
     initial_state = {
         "total_equity": f"{total_equity:.2f}",
@@ -354,14 +377,29 @@ async def financial_analysis_pipeline(
             if content_str:
                 author_name = event.author.upper() if event.author else "SYSTEM"
                 if author_name != "ESCALATION_CHECKER":
-                    print(f"\n{author_name}: (replied with:)\n{content_str}\n")
-    print("\n[PHASE: 4. Exit (Multi-Agent Loop Finished)]")
+                    emoji_map = {
+                        "PORTFOLIO_ANALYST": "🧐 ",
+                        "SENIOR_RISK_ADVISOR": "🛡️ ",
+                        "SYSTEM": "⚙️ "
+                    }
+                    color_map = {
+                        "PORTFOLIO_ANALYST": CLR_MAGENTA,
+                        "SENIOR_RISK_ADVISOR": CLR_YELLOW,
+                        "SYSTEM": CLR_CYAN
+                    }
+                    emoji = emoji_map.get(author_name, "")
+                    color = color_map.get(author_name, CLR_RESET)
+                    
+                    print(f"{color}########################## {emoji}{author_name} ##########################{CLR_RESET}")
+                    print(content_str)
+                    print(f"{color}" + "#" * (len(author_name) + len(emoji) + 54) + f"{CLR_RESET}\n")
+    print(f"\n{CLR_BOLD}{CLR_CYAN}🔄 [PHASE: 4. Exit (Multi-Agent Loop Finished)]{CLR_RESET}")
 
     # Retrieve final approved target allocations from the latest session state
     session = await session_service.get_session(user_id="cron_job", session_id=session.id, app_name="trading")
     proposal = session.state.get("analyst_proposal")
     if not proposal:
-        print("\n[CRITICAL ERROR] Failed to obtain approved portfolio target allocations from the loop agent.")
+        print(f"\n{CLR_BOLD}{CLR_RED}[CRITICAL ERROR] Failed to obtain approved portfolio target allocations from the loop agent.{CLR_RESET}")
         return ranked_portfolio
 
     # Extract allocations and decisions supporting both dictionary and Pydantic formats
@@ -391,7 +429,7 @@ async def financial_analysis_pipeline(
             })
         decisions = getattr(proposal, "decisions", [])
 
-    print(f"\nApproved target allocations: {approved_allocations}")
+    print(f"\n{CLR_BOLD}{CLR_GREEN}Approved target allocations: {approved_allocations}{CLR_RESET}")
 
     # Map decisions (signal/thesis) back to ranked_portfolio
     decision_map = {}
@@ -414,31 +452,31 @@ async def financial_analysis_pipeline(
             item["thesis"] = decision_map[ticker]["thesis"]
 
     # 4. Instantiate ExecutionController and run broker execution
-    print("\n[PHASE: 5. Execution & Portfolio Rebalancing]")
+    print(f"\n{CLR_BOLD}{CLR_GREEN}💸 [PHASE: 5. Execution & Portfolio Rebalancing]{CLR_RESET}")
     print(f"   Connecting to Robinhood MCP tools for target account ending in 48661...")
     controller = ExecutionController(toolset=robinhood_toolset, account_number=account_number, dataset_id=dataset_id)
     await controller.execute_rebalance(approved_allocations=approved_allocations)
-    print("[PHASE: 5. Exit]")
+    print(f"{CLR_BOLD}{CLR_GREEN}💸 [PHASE: 5. Exit]{CLR_RESET}")
 
     # 5. Log post-trade portfolio snapshot to BigQuery
-    print("\nLogging portfolio snapshot to BigQuery...")
+    print(f"\n{CLR_CYAN}Logging portfolio snapshot to BigQuery...{CLR_RESET}")
     try:
         from app.tools.robinhood_service import log_portfolio_snapshot
         await log_portfolio_snapshot(dataset_id=dataset_id)
-        print("   Portfolio snapshot logged successfully.")
+        print(f"   {CLR_GREEN}Portfolio snapshot logged successfully.{CLR_RESET}")
     except Exception as e:
-        print(f"   Warning: Failed to log portfolio snapshot: {e}")
+        print(f"   {CLR_YELLOW}Warning: Failed to log portfolio snapshot: {e}{CLR_RESET}")
 
     # 6. Log final unified results to BigQuery
     if graveyard_rows is not None:
-        print("\nLogging final signals and unified theses to BigQuery...")
+        print(f"\n{CLR_CYAN}Logging final signals and unified theses to BigQuery...{CLR_RESET}")
         try:
             from app.tools.bigquery_service import insert_sentiment
             all_rows_to_log = list(ranked_portfolio) + list(graveyard_rows)
             insert_sentiment(all_rows_to_log, dataset_id=dataset_id)
-            print("   Unified market metrics and execution logs written to BigQuery successfully.")
+            print(f"   {CLR_GREEN}Unified market metrics and execution logs written to BigQuery successfully.{CLR_RESET}")
         except Exception as e:
-            print(f"   Warning: Failed to write unified metrics to BigQuery: {e}")
+            print(f"   {CLR_YELLOW}Warning: Failed to write unified metrics to BigQuery: {e}{CLR_RESET}")
 
     return ranked_portfolio
 
