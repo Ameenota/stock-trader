@@ -30,7 +30,11 @@ USE_VERTEX_AI = True
 
 if USE_VERTEX_AI:
     import google.auth
-    _, project_id = google.auth.default()
+    try:
+        _, project_id = google.auth.default()
+    except Exception:
+        project_id = None
+    project_id = project_id or os.environ.get("GOOGLE_CLOUD_PROJECT") or "conspiracy-493120"
     os.environ["GOOGLE_CLOUD_PROJECT"] = project_id
     os.environ["GOOGLE_CLOUD_LOCATION"] = "global"
     os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "True"
