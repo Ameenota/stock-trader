@@ -110,9 +110,13 @@ The pipeline fetches the latest 24 hours of news for the 10 active watchlist tic
 ### Stage 3: Multi-Agent Critique Loop & Decoupled Execution
 Instead of executing trades directly from LLM prompts, the target state is debated and finalized by a multi-agent critique loop, then executed deterministically:
 1. **Portfolio Analyst Agent**: Proposes target stock allocations (percentages of total equity) based on today's watchlist and weekly metrics.
-2. **Senior Risk Advisor Agent (Critic)**: Enforces technical entry guardrails (RSI <= 70, MACD momentum crossovers, hysteresis score swaps >= 0.3) and percentage budget safety bounds.
+2. **Senior Risk Advisor Agent (Critic)**: Enforces strict trading rules and risk mandates:
+   * **Value Entries**: Approve and prioritize entries for assets experiencing a drawdown of **10% or more** from their 52-week high, provided their 5-day Exponential Moving Average (EWMA) sentiment remains bullish (`EWMA > 0.1`).
+   * **Volatility Rejection**: Reject any new allocations into assets where the sentiment volatility (5-day standard deviation) is exceptionally high (`volatility > 0.4`), preventing exposure to speculative binary news events.
+   * **Minimum Holding Period**: Protect existing positions by rejecting any proposal to sell or liquidate an asset if its `days_held < 21 days`, unless its weekly sentiment EWMA falls below `-0.5`.
+   * **Cash and Position Sizing**: Enforces a target cash buffer of 10% of total equity (5%-15% tolerance range) and a position tolerance of +/- 3% to prevent minor portfolio churn.
 3. **Escalation Checker**: Custom `BaseAgent` that terminates the LoopAgent when the proposal receives approval from the Advisor.
-4. **Execution Controller**: Evaluates target weights vs current holdings, applies cash buffer tolerance (5%-15% of equity) and position tolerance (+/- 3%) to prevent minor churn, and schedules trades sequentially (sells first, then buys) via the Robinhood MCP server. TLT remains the Treasury ETF fallback if technical criteria are not met.
+4. **Execution Controller**: Evaluates target weights vs current holdings and schedules trades sequentially (sells first, then buys) via the Robinhood MCP server.
 
 ---
 
