@@ -235,17 +235,6 @@ def insert_sentiment(
         job = client.load_table_from_json(rows_to_insert, table_id, job_config=job_config)
         job.result()
     except Exception as e:
-        try:
-            import json
-            import os
-            debug_payload = "\n".join(json.dumps(row) for row in rows_to_insert)
-            debug_path = "/Users/sagar/.gemini/antigravity-ide/brain/147bd14d-d269-4114-9b1d-1387f84dbb9f/scratch/bq_debug_payload.json"
-            os.makedirs(os.path.dirname(debug_path), exist_ok=True)
-            with open(debug_path, "w") as f:
-                f.write(debug_payload)
-            print(f"   [DEBUG] Wrote BQ debug payload to {debug_path}")
-        except Exception as ex:
-            print(f"   [DEBUG] Failed to write debug payload: {ex}")
         raise RuntimeError(f"Failed to insert sentiment rows into BigQuery: {e}")
 
 
