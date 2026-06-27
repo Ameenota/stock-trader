@@ -60,6 +60,10 @@ def setup_bigquery(dataset_id: str = "portfolio_analytics") -> None:
         bigquery.SchemaField("rsi", "FLOAT", mode="NULLABLE"),
         bigquery.SchemaField("macd", "FLOAT", mode="NULLABLE"),
         bigquery.SchemaField("macd_signal", "FLOAT", mode="NULLABLE"),
+        bigquery.SchemaField("drawdown_pct", "FLOAT", mode="NULLABLE"),
+        bigquery.SchemaField("sustained_rsi_drop", "BOOLEAN", mode="NULLABLE"),
+        bigquery.SchemaField("sentiment_ewma", "FLOAT", mode="NULLABLE"),
+        bigquery.SchemaField("sentiment_volatility", "FLOAT", mode="NULLABLE"),
     ]
     sentiment_table = bigquery.Table(sentiment_table_id, schema=sentiment_schema)
     try:
@@ -117,6 +121,47 @@ def setup_bigquery(dataset_id: str = "portfolio_analytics") -> None:
         client.create_table(snapshot_table, exists_ok=True)
 
 
+def _sanitize_string(s: str | None) -> str | None:
+    if s is None:
+        return None
+    # Filter out control characters (ASCII < 32) except tab, newline, carriage return
+    # and remove null bytes
+    cleaned = "".join(ch for ch in s if ord(ch) >= 32 or ch in "\n\r\t")
+    cleaned = cleaned.replace("\x00", "")
+    # Remove trailing backslashes to avoid escaping closing quotes in JSON loading
+    while cleaned.endswith("\\"):
+        cleaned = cleaned[:-1]
+    return cleaned
+
+
+def _sanitize_news(news: Any) -> Any:
+    if isinstance(news, list):
+        return [_sanitize_news(x) for x in news]
+    elif isinstance(news, dict):
+        return {k: _sanitize_news(v) for k, v in news.items()}
+    elif isinstance(news, str):
+        cleaned = "".join(ch for ch in news if ord(ch) >= 32 or ch in "\n\r\t")
+        cleaned = cleaned.replace("\x00", "")
+        # Remove trailing backslashes
+        while cleaned.endswith("\\"):
+            cleaned = cleaned[:-1]
+        return cleaned
+    return news
+
+
+def _safe_float(v: Any) -> float | None:
+    if v is None:
+        return None
+    try:
+        import math
+        f = float(v)
+        if math.isnan(f) or math.isinf(f):
+            return None
+        return f
+    except (ValueError, TypeError):
+        return None
+
+
 def insert_sentiment(
     ranked_portfolio: List[Dict[str, Any]], 
     dataset_id: str = "portfolio_analytics"
@@ -137,50 +182,50 @@ def insert_sentiment(
     
     rows_to_insert = []
     for item in ranked_portfolio:
+        thesis_val = _sanitize_string(item.get("thesis"))
         raw_news_val = item.get("raw_news")
         if isinstance(raw_news_val, (list, dict)):
+            raw_news_val = _sanitize_news(raw_news_val)
             import json
             raw_news_val = json.dumps(raw_news_val)
+        raw_news_val = _sanitize_string(raw_news_val)
+        analyst_consensus_val = _sanitize_string(item.get("analyst_consensus"))
 
         # Cast to float/int if present to prevent any serialization type mismatch
-        target_price_val = item.get("target_price")
-        if target_price_val is not None:
-            target_price_val = float(target_price_val)
-        current_price_val = item.get("current_price")
-        if current_price_val is not None:
-            current_price_val = float(current_price_val)
-        ma_20_val = item.get("moving_average_20d")
-        if ma_20_val is not None:
-            ma_20_val = float(ma_20_val)
-        ratio_val = item.get("price_to_ma_ratio")
-        if ratio_val is not None:
-            ratio_val = float(ratio_val)
-        rsi_val = item.get("rsi")
-        if rsi_val is not None:
-            rsi_val = float(rsi_val)
-        macd_val = item.get("macd")
-        if macd_val is not None:
-            macd_val = float(macd_val)
-        macd_sig_val = item.get("macd_signal")
-        if macd_sig_val is not None:
-            macd_sig_val = float(macd_sig_val)
+        target_price_val = _safe_float(item.get("target_price"))
+        current_price_val = _safe_float(item.get("current_price"))
+        ma_20_val = _safe_float(item.get("moving_average_20d"))
+        ratio_val = _safe_float(item.get("price_to_ma_ratio"))
+        rsi_val = _safe_float(item.get("rsi"))
+        macd_val = _safe_float(item.get("macd"))
+        macd_sig_val = _safe_float(item.get("macd_signal"))
+        drawdown_pct_val = _safe_float(item.get("drawdown_pct"))
+        sustained_rsi_drop_val = item.get("sustained_rsi_drop")
+        if sustained_rsi_drop_val is not None:
+            sustained_rsi_drop_val = bool(sustained_rsi_drop_val)
+        sentiment_ewma_val = _safe_float(item.get("sentiment_ewma"))
+        sentiment_volatility_val = _safe_float(item.get("sentiment_volatility"))
 
         rows_to_insert.append({
             "ticker": item["ticker"],
             "raw_score": float(item["raw_score"]),
-            "thesis": item.get("thesis"),
+            "thesis": thesis_val,
             "relative_rank": int(item["relative_rank"]),
             "signal": item["signal"],
             "timestamp": item.get("timestamp") or current_time_str,
             "raw_news": raw_news_val,
-            "analyst_consensus": item.get("analyst_consensus"),
+            "analyst_consensus": analyst_consensus_val,
             "target_price": target_price_val,
             "current_price": current_price_val,
             "moving_average_20d": ma_20_val,
             "price_to_ma_ratio": ratio_val,
             "rsi": rsi_val,
             "macd": macd_val,
-            "macd_signal": macd_sig_val
+            "macd_signal": macd_sig_val,
+            "drawdown_pct": drawdown_pct_val,
+            "sustained_rsi_drop": sustained_rsi_drop_val,
+            "sentiment_ewma": sentiment_ewma_val,
+            "sentiment_volatility": sentiment_volatility_val
         })
         
     try:
@@ -190,6 +235,17 @@ def insert_sentiment(
         job = client.load_table_from_json(rows_to_insert, table_id, job_config=job_config)
         job.result()
     except Exception as e:
+        try:
+            import json
+            import os
+            debug_payload = "\n".join(json.dumps(row) for row in rows_to_insert)
+            debug_path = "/Users/sagar/.gemini/antigravity-ide/brain/147bd14d-d269-4114-9b1d-1387f84dbb9f/scratch/bq_debug_payload.json"
+            os.makedirs(os.path.dirname(debug_path), exist_ok=True)
+            with open(debug_path, "w") as f:
+                f.write(debug_payload)
+            print(f"   [DEBUG] Wrote BQ debug payload to {debug_path}")
+        except Exception as ex:
+            print(f"   [DEBUG] Failed to write debug payload: {ex}")
         raise RuntimeError(f"Failed to insert sentiment rows into BigQuery: {e}")
 
 
@@ -357,7 +413,7 @@ def get_historical_metrics(
     table_id = f"{client.project}.{dataset_id}.infrastructure_market_metrics"
 
     query = f"""
-        SELECT ticker, raw_score, thesis, relative_rank, signal, timestamp, analyst_consensus, target_price, current_price, moving_average_20d, price_to_ma_ratio, rsi, macd, macd_signal
+        SELECT ticker, raw_score, thesis, relative_rank, signal, timestamp, analyst_consensus, target_price, current_price, moving_average_20d, price_to_ma_ratio, rsi, macd, macd_signal, drawdown_pct, sustained_rsi_drop, sentiment_ewma, sentiment_volatility
         FROM `{table_id}`
         WHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @days DAY)
           AND signal != 'FILTERED'
@@ -390,7 +446,11 @@ def get_historical_metrics(
             "price_to_ma_ratio": getattr(row, "price_to_ma_ratio", None),
             "rsi": getattr(row, "rsi", None),
             "macd": getattr(row, "macd", None),
-            "macd_signal": getattr(row, "macd_signal", None)
+            "macd_signal": getattr(row, "macd_signal", None),
+            "drawdown_pct": getattr(row, "drawdown_pct", None),
+            "sustained_rsi_drop": getattr(row, "sustained_rsi_drop", None),
+            "sentiment_ewma": getattr(row, "sentiment_ewma", None),
+            "sentiment_volatility": getattr(row, "sentiment_volatility", None)
         })
         
     return metrics
@@ -416,7 +476,7 @@ def get_latest_market_metrics(
     table_id = f"{client.project}.{dataset_id}.infrastructure_market_metrics"
 
     query = f"""
-        SELECT ticker, raw_score, thesis, relative_rank, signal, timestamp, analyst_consensus, target_price, current_price, moving_average_20d, price_to_ma_ratio, rsi, macd, macd_signal
+        SELECT ticker, raw_score, thesis, relative_rank, signal, timestamp, analyst_consensus, target_price, current_price, moving_average_20d, price_to_ma_ratio, rsi, macd, macd_signal, drawdown_pct, sustained_rsi_drop, sentiment_ewma, sentiment_volatility
         FROM `{table_id}`
         WHERE DATE(timestamp) = @target_date
         ORDER BY relative_rank DESC
@@ -447,7 +507,11 @@ def get_latest_market_metrics(
             "price_to_ma_ratio": getattr(row, "price_to_ma_ratio", None),
             "rsi": getattr(row, "rsi", None),
             "macd": getattr(row, "macd", None),
-            "macd_signal": getattr(row, "macd_signal", None)
+            "macd_signal": getattr(row, "macd_signal", None),
+            "drawdown_pct": getattr(row, "drawdown_pct", None),
+            "sustained_rsi_drop": getattr(row, "sustained_rsi_drop", None),
+            "sentiment_ewma": getattr(row, "sentiment_ewma", None),
+            "sentiment_volatility": getattr(row, "sentiment_volatility", None)
         })
         
     return metrics
@@ -554,4 +618,48 @@ def get_last_buy_timestamp(
     except Exception:
         pass
     return None
+
+
+def get_recent_sentiment_scores(
+    tickers: List[str], 
+    limit: int = 4, 
+    dataset_id: str = "portfolio_analytics"
+) -> Dict[str, List[float]]:
+    """Queries BigQuery and returns the historical raw sentiment scores for tickers over the last N runs."""
+    client = get_bigquery_client()
+    table_id = f"{client.project}.{dataset_id}.infrastructure_market_metrics"
+    
+    if not tickers:
+        return {}
+
+    # Select the last N rows for the given tickers
+    query = f"""
+        SELECT ticker, raw_score, timestamp
+        FROM (
+            SELECT ticker, raw_score, timestamp,
+                   ROW_NUMBER() OVER(PARTITION BY ticker ORDER BY timestamp DESC) as rn
+            FROM `{table_id}`
+            WHERE ticker IN UNNEST(@tickers)
+        )
+        WHERE rn <= @limit
+        ORDER BY ticker, timestamp ASC
+    """
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ArrayQueryParameter("tickers", "STRING", tickers),
+            bigquery.ScalarQueryParameter("limit", "INT64", limit)
+        ]
+    )
+    try:
+        query_job = client.query(query, job_config=job_config)
+        results = query_job.result()
+        scores = {}
+        for row in results:
+            ticker = row.ticker
+            if ticker not in scores:
+                scores[ticker] = []
+            scores[ticker].append(float(row.raw_score))
+        return scores
+    except Exception:
+        return {}
 

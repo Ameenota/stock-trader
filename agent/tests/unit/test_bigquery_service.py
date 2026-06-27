@@ -178,7 +178,11 @@ def test_insert_sentiment(mock_bq_client):
             "price_to_ma_ratio": 1.037,
             "rsi": 65.4,
             "macd": 1.25,
-            "macd_signal": 0.95
+            "macd_signal": 0.95,
+            "drawdown_pct": None,
+            "sustained_rsi_drop": None,
+            "sentiment_ewma": None,
+            "sentiment_volatility": None
         },
         {
             "ticker": "SMCI",
@@ -195,7 +199,11 @@ def test_insert_sentiment(mock_bq_client):
             "price_to_ma_ratio": None,
             "rsi": None,
             "macd": None,
-            "macd_signal": None
+            "macd_signal": None,
+            "drawdown_pct": None,
+            "sustained_rsi_drop": None,
+            "sentiment_ewma": None,
+            "sentiment_volatility": None
         }
     ]
 

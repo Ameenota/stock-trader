@@ -135,19 +135,18 @@ Starting Portfolio State:
 Recent Trade History:
 {recent_trades}
 
-Today's Watch List & Metrics:
+Today's Watch List & Weekly Metrics:
 {ranked_portfolio}
-
-Historical Weekly Metrics:
-{weekly_metrics}
 
 Advisor Critique from Previous Iteration:
 {advisor_critique}
 
-Propose target allocations for stocks as percentages of total equity (e.g. 0.30 for 30%). You can select up to 3 active holdings (targeting 30% each, summing to 90% of total equity, leaving 10% for cash). If you want to allocate to a defensive treasury bond option, choose TLT. If you have exceptional conviction, you may allocate up to 90% of total equity to a single high-conviction stock. Do not include CASH or USD in the allocations list. The cash buffer is managed implicitly by leaving the remaining percentage of total equity unallocated (e.g., target stock allocations summing to 90% of total equity, leaving 10% cash unallocated).
+Propose target allocations for stocks as percentages of total equity (e.g. 0.30 for 30%). You can select up to 3 active holdings (targeting 30% each, summing to 90% of total equity, leaving 10% for cash). If you want to allocate to a defensive treasury bond option, choose TLT. Do not include CASH or USD in the allocations list. The cash buffer is managed implicitly by leaving the remaining percentage of total equity unallocated.
 
 Trading Rules to follow:
-- Avoid proposing to sell, reduce weight of, or liquidate any stock in "Current Holdings" if its `days_held` is less than 3, UNLESS its news sentiment raw score (conviction score) is extremely negative (below -0.5).
+1. Focus on the Trend: Base your conviction on the '5-day EWMA Sentiment' rather than volatile daily spikes.
+2. Technical Entry: Prioritize entries where the 'sustained_rsi_drop' flag is TRUE (RSI < 30 for 3+ consecutive days) to confirm structural drawdowns.
+3. Minimum Holding Period: Do NOT propose to sell, reduce weight of, or liquidate any stock in "Current Holdings" if its `days_held` is less than 21 days, UNLESS its EWMA sentiment score is extremely negative (below -0.5).
 
 Your proposal must output a list of TargetAllocation objects under the `allocations` key. You must also output the final signals and theses for all watchlist assets under the `decisions` key.
 """
@@ -158,24 +157,20 @@ Starting Portfolio State:
 - Total Equity: ${total_equity}
 - Current Cash: ${current_cash} ({current_cash_pct}% of total equity)
 - Current Holdings (with days_held): {current_holdings}
-- Active Watchlist (with RSI, MACD, and Conviction Scores): {watchlist_data}
+- Active Watchlist (with EWMA Sentiment, Drawdown, and Volatility): {watchlist_data}
 
 Analyst's Draft Proposal:
 {analyst_proposal}
 
 Our strict rules:
-1. Target Cash Buffer: A target cash buffer of 10% of total equity must be respected.
-2. Cash Tolerance Range: If current cash is between 5% and 15% of total equity, do not force cash adjustment.
-3. Position Sizing: The baseline target for a holding is 30% of total equity. However, you may approve allocations up to 90% for a single stock IF the conviction score is exceptional. Do not rebalance an existing holding if its current weight is within a +/- 3% tolerance of its target.
-4. Technical timing checks:
-   - REJECT any buy/scale-up order if the asset's RSI > 70 (overbought condition).
-   - Look for entry when RSI is near or below 30.
-   - Confirm trend momentum using MACD crossovers.
-5. Hysteresis swap buffer: REJECT replacing an existing holding with a new candidate unless the new candidate's conviction score is at least 0.3 higher than the existing holding's score.
-6. Minimum holding period: REJECT any proposal to sell, reduce weight of, or liquidate an existing holding if its days_held < 3, UNLESS the ticker's news sentiment score (conviction_score) is extremely negative (below -0.5).
+1. Target Cash Buffer: A target cash buffer of 10% of total equity must be respected. If current cash is between 5% and 15%, do not force an adjustment.
+2. Position Sizing: The baseline target for a holding is 30% of total equity. Do not rebalance an existing holding if its current weight is within a +/- 3% tolerance of its target.
+3. Value Entries: Approve and prioritize entries for assets experiencing a drawdown of 10% or more from their 52-week high, provided their 5-day EWMA sentiment remains bullish (EWMA sentiment > 0.1).
+4. Volatility Rejection: REJECT any new allocations into assets where the 'sentiment volatility' (standard deviation) is exceptionally high (standard deviation > 0.4), indicating erratic news or pending binary events.
+5. Minimum Holding Period: REJECT any proposal to sell, reduce weight of, or liquidate an existing holding if its days_held < 21, UNLESS the ticker's EWMA sentiment score is extremely negative (below -0.5).
 
 Output format:
-You must output a structured review matching the AdvisorCritique schema. If you reject the proposal, you must provide explicit, mathematically sound feedback so the analyst can correct the weights in the iteration.
+You must output a structured review matching the AdvisorCritique schema. If you reject the proposal, you must provide explicit, mathematically sound feedback so the analyst can correct the weights in the next iteration.
 """
 
 class AssetDecision(BaseModel):
@@ -320,11 +315,14 @@ async def financial_analysis_pipeline(
     recent_trades = get_recent_trades(limit=10, dry_run=is_dry_run, dataset_id=dataset_id)
     recent_trades_str = str(recent_trades) if recent_trades else "No recent trade history found."
 
-    # Build active watchlist summary containing RSI, MACD, and Conviction Scores
+    # Build active watchlist summary containing EWMA, drawdown, volatility, and technicals
     watchlist_summary = str([{
         "ticker": item["ticker"],
         "conviction_score": item["raw_score"],
-        "sentiment_signal": item["signal"],
+        "sentiment_ewma_5d": item.get("sentiment_ewma"),
+        "sentiment_volatility_5d": item.get("sentiment_volatility"),
+        "drawdown_pct": item.get("drawdown_pct"),
+        "sustained_rsi_drop": item.get("sustained_rsi_drop"),
         "rsi": item.get("rsi"),
         "macd": item.get("macd"),
         "macd_signal": item.get("macd_signal")
@@ -430,6 +428,56 @@ async def financial_analysis_pipeline(
         decisions = getattr(proposal, "decisions", [])
 
     print(f"\n{CLR_BOLD}{CLR_GREEN}Approved target allocations: {approved_allocations}{CLR_RESET}")
+
+    if is_dry_run:
+        import json
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        dry_run_filename = f"dry_run_results_{timestamp}.json"
+        critique = session.state.get("advisor_critique")
+        
+        proposal_dict = {}
+        if proposal:
+            if isinstance(proposal, dict):
+                proposal_dict = proposal
+            else:
+                proposal_dict = {
+                    "allocations": [
+                        {"ticker": a.ticker, "weight_pct": a.weight_pct} for a in getattr(proposal, "allocations", [])
+                    ],
+                    "decisions": [
+                        {"ticker": d.ticker, "signal": d.signal, "thesis": d.thesis} for d in getattr(proposal, "decisions", [])
+                    ],
+                    "thesis": getattr(proposal, "thesis", "")
+                }
+        
+        critique_dict = {}
+        if critique:
+            if isinstance(critique, dict):
+                critique_dict = critique
+            else:
+                critique_dict = {
+                    "approved": getattr(critique, "approved", False),
+                    "feedback": getattr(critique, "feedback", ""),
+                    "suggested_allocations": [
+                        {"ticker": a.ticker, "weight_pct": a.weight_pct} for a in getattr(critique, "suggested_allocations", []) or []
+                    ]
+                }
+                
+        dry_run_data = {
+            "timestamp": datetime.now().isoformat(),
+            "target_allocations": approved_allocations,
+            "analyst_proposal": proposal_dict,
+            "advisor_critique": critique_dict
+        }
+        
+        try:
+            filepath = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", dry_run_filename)
+            with open(filepath, "w") as f:
+                json.dump(dry_run_data, f, indent=2)
+            print(f"   {CLR_GREEN}[DRY_RUN] Successfully dumped dry run results to {filepath}{CLR_RESET}")
+        except Exception as e:
+            print(f"   {CLR_YELLOW}Warning: Failed to dump dry run results: {e}{CLR_RESET}")
 
     # Map decisions (signal/thesis) back to ranked_portfolio
     decision_map = {}

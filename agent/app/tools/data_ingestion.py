@@ -133,7 +133,9 @@ def fetch_ticker_market_data(ticker: str, current_time: float | None = None) -> 
         "price_to_ma_ratio": None,
         "rsi": None,
         "macd": None,
-        "macd_signal": None
+        "macd_signal": None,
+        "drawdown_pct": None,
+        "sustained_rsi_drop": False
     }
 
     try:
@@ -182,12 +184,20 @@ def fetch_ticker_market_data(ticker: str, current_time: float | None = None) -> 
 
     # 3. Fetch History for Momentum & Technical Indicators
     try:
-        # Use 2mo to ensure we have at least 20 trading days
-        history = stock.history(period="2mo")
+        # Use 1y to calculate 52-week drawdown and sustained RSI drop
+        history = stock.history(period="1y")
         if history is not None and not history.empty and "Close" in history.columns:
-            close_prices = history["Close"]
+            close_prices = history["Close"].dropna()
             if len(close_prices) > 0:
                 data["current_price"] = float(close_prices.iloc[-1])
+                
+                # Compute 52-week high and drawdown
+                high_52w = float(close_prices.max())
+                if high_52w > 0:
+                    data["drawdown_pct"] = float(((high_52w - data["current_price"]) / high_52w) * 100)
+                else:
+                    data["drawdown_pct"] = 0.0
+
                 # Compute 20-day simple moving average
                 ma_20_series = close_prices.tail(20)
                 data["moving_average_20d"] = float(ma_20_series.mean())
@@ -200,6 +210,13 @@ def fetch_ticker_market_data(ticker: str, current_time: float | None = None) -> 
                     if rsi_series is not None and not rsi_series.empty:
                         last_rsi = rsi_series.iloc[-1]
                         data["rsi"] = float(last_rsi) if pd.notnull(last_rsi) else None
+                        
+                        # Check last 3 consecutive days of RSI for sustained drop
+                        if len(rsi_series) >= 3:
+                            last_3_rsi = rsi_series.tail(3)
+                            data["sustained_rsi_drop"] = bool((last_3_rsi < 30).all())
+                        else:
+                            data["sustained_rsi_drop"] = False
                 except Exception:
                     pass
                 
@@ -253,7 +270,7 @@ def ingest_market_data(tickers: List[str] | None = None, current_time: float | N
 def print_portfolio_table(portfolio: list) -> None:
     """Renders a beautiful ASCII table of the ranked portfolio and trade signals."""
     print("\n" + "="*175)
-    print(f"{CLR_BOLD}{CLR_BLUE}{'Ticker':<6} | {'Score':<6} | {'Rank':<5} | {'Signal':<11} | {'Price':<8} | {'20d SMA':<8} | {'Price/MA':<8} | {'RSI':<6} | {'MACD':<8} | {'MACD Sig':<8} | {'Consensus':<10} | {'Thesis'}{CLR_RESET}")
+    print(f"{CLR_BOLD}{CLR_BLUE}{'Ticker':<6} | {'Score':<6} | {'EWMA':<6} | {'Drawdown':<8} | {'Rank':<5} | {'Signal':<11} | {'Price':<8} | {'20d SMA':<8} | {'Price/MA':<8} | {'RSI':<6} | {'MACD':<8} | {'MACD Sig':<8} | {'Consensus':<10} | {'Thesis'}{CLR_RESET}")
     print("="*175)
     for item in portfolio:
         thesis = item.get("thesis", "")
@@ -293,9 +310,22 @@ def print_portfolio_table(portfolio: list) -> None:
         else:
             score_display = f"{score_val:<6}"
             
+        ewma = item.get("sentiment_ewma")
+        if ewma is not None:
+            ewma_val = f"{ewma:+.2f}"
+            ewma_display = f"{CLR_GREEN}{ewma_val:<6}{CLR_RESET}" if ewma > 0 else (f"{CLR_RED}{ewma_val:<6}{CLR_RESET}" if ewma < 0 else f"{ewma_val:<6}")
+        else:
+            ewma_display = f"{'N/A':<6}"
+
+        dd = item.get("drawdown_pct")
+        if dd is not None:
+            dd_display = f"{dd:>6.1f}%"
+        else:
+            dd_display = f"{'N/A':>7}"
+            
         ticker_display = f"{CLR_BOLD}{item['ticker']:<6}{CLR_RESET}"
         
-        print(f"{ticker_display} | {score_display} | {item['relative_rank']:<5} | {signal_display} | {price_str:<8} | {ma_str:<8} | {ratio_str:<8} | {rsi_str:<6} | {macd_str:<8} | {macd_sig_str:<8} | {consensus:<10} | {truncated_thesis}")
+        print(f"{ticker_display} | {score_display} | {ewma_display} | {dd_display:<8} | {item['relative_rank']:<5} | {signal_display} | {price_str:<8} | {ma_str:<8} | {ratio_str:<8} | {rsi_str:<6} | {macd_str:<8} | {macd_sig_str:<8} | {consensus:<10} | {truncated_thesis}")
     print("="*175 + "\n")
 
 
@@ -378,6 +408,14 @@ async def run_sentiment_analysis_pipeline(dataset_id: str = "portfolio_analytics
 
     # 4. Attach raw news and technical metrics for auditing
     current_time_str = datetime.now(timezone.utc).isoformat()
+    
+    # Query BigQuery for historical raw scores to compute EWMA and sentiment volatility
+    from app.tools.bigquery_service import get_recent_sentiment_scores
+    tickers_list = [item["ticker"] for item in ranked_portfolio]
+    historical_scores_map = get_recent_sentiment_scores(tickers=tickers_list, limit=4, dataset_id=dataset_id)
+    
+    import numpy as np
+
     for item in ranked_portfolio:
         ticker = item["ticker"]
         item["timestamp"] = current_time_str
@@ -391,6 +429,23 @@ async def run_sentiment_analysis_pipeline(dataset_id: str = "portfolio_analytics
         item["rsi"] = ticker_data.get("rsi")
         item["macd"] = ticker_data.get("macd")
         item["macd_signal"] = ticker_data.get("macd_signal")
+        item["drawdown_pct"] = ticker_data.get("drawdown_pct")
+        item["sustained_rsi_drop"] = ticker_data.get("sustained_rsi_drop")
+
+        # Get historical scores, append today's, and calculate 5-day EWMA & Volatility
+        past_scores = historical_scores_map.get(ticker, [])
+        today_score = float(item["raw_score"])
+        all_scores = past_scores + [today_score]
+        
+        if len(all_scores) > 1:
+            ewma_val = float(pd.Series(all_scores).ewm(span=5, adjust=False).mean().iloc[-1])
+            volatility_val = float(np.std(all_scores, ddof=1)) if len(all_scores) >= 2 else 0.0
+        else:
+            ewma_val = today_score
+            volatility_val = 0.0
+            
+        item["sentiment_ewma"] = ewma_val
+        item["sentiment_volatility"] = volatility_val
 
     # 5. Build placeholder rows for the filtered graveyard assets to prove LLM token savings
     graveyard_rows = []
@@ -411,7 +466,11 @@ async def run_sentiment_analysis_pipeline(dataset_id: str = "portfolio_analytics
                 "price_to_ma_ratio": detail.get("momentum"),
                 "rsi": None,
                 "macd": None,
-                "macd_signal": None
+                "macd_signal": None,
+                "drawdown_pct": None,
+                "sustained_rsi_drop": False,
+                "sentiment_ewma": 0.0,
+                "sentiment_volatility": 0.0
             })
 
     # 6. Ingest and log SPY benchmark data
@@ -435,7 +494,11 @@ async def run_sentiment_analysis_pipeline(dataset_id: str = "portfolio_analytics
                 "price_to_ma_ratio": None,
                 "rsi": None,
                 "macd": None,
-                "macd_signal": None
+                "macd_signal": None,
+                "drawdown_pct": None,
+                "sustained_rsi_drop": False,
+                "sentiment_ewma": 0.0,
+                "sentiment_volatility": 0.0
             })
     except Exception as e:
         print(f"   {CLR_YELLOW}Warning: Failed to ingest SPY: {e}{CLR_RESET}")
