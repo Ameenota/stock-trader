@@ -64,6 +64,7 @@ def setup_bigquery(dataset_id: str = "portfolio_analytics") -> None:
         bigquery.SchemaField("sustained_rsi_drop", "BOOLEAN", mode="NULLABLE"),
         bigquery.SchemaField("sentiment_ewma", "FLOAT", mode="NULLABLE"),
         bigquery.SchemaField("sentiment_volatility", "FLOAT", mode="NULLABLE"),
+        bigquery.SchemaField("target_weight", "FLOAT", mode="NULLABLE"),
     ]
     sentiment_table = bigquery.Table(sentiment_table_id, schema=sentiment_schema)
     try:
@@ -205,6 +206,7 @@ def insert_sentiment(
             sustained_rsi_drop_val = bool(sustained_rsi_drop_val)
         sentiment_ewma_val = _safe_float(item.get("sentiment_ewma"))
         sentiment_volatility_val = _safe_float(item.get("sentiment_volatility"))
+        target_weight_val = _safe_float(item.get("target_weight"))
 
         rows_to_insert.append({
             "ticker": item["ticker"],
@@ -225,7 +227,8 @@ def insert_sentiment(
             "drawdown_pct": drawdown_pct_val,
             "sustained_rsi_drop": sustained_rsi_drop_val,
             "sentiment_ewma": sentiment_ewma_val,
-            "sentiment_volatility": sentiment_volatility_val
+            "sentiment_volatility": sentiment_volatility_val,
+            "target_weight": target_weight_val
         })
         
     try:
@@ -259,7 +262,7 @@ def get_latest_signals(
 
     # Query latest signals matching STRONG BUY or LIQUIDATE for the given date, ordered by timestamp desc
     query = f"""
-        SELECT ticker, raw_score, thesis, relative_rank, signal, timestamp, analyst_consensus, target_price, current_price, moving_average_20d, price_to_ma_ratio, rsi, macd, macd_signal
+        SELECT ticker, raw_score, thesis, relative_rank, signal, timestamp, analyst_consensus, target_price, current_price, moving_average_20d, price_to_ma_ratio, rsi, macd, macd_signal, target_weight
         FROM `{table_id}`
         WHERE DATE(timestamp) = @target_date
           AND signal IN ('STRONG BUY', 'LIQUIDATE')
@@ -291,7 +294,8 @@ def get_latest_signals(
             "price_to_ma_ratio": getattr(row, "price_to_ma_ratio", None),
             "rsi": getattr(row, "rsi", None),
             "macd": getattr(row, "macd", None),
-            "macd_signal": getattr(row, "macd_signal", None)
+            "macd_signal": getattr(row, "macd_signal", None),
+            "target_weight": getattr(row, "target_weight", None)
         })
         
     return signals
@@ -402,7 +406,7 @@ def get_historical_metrics(
     table_id = f"{client.project}.{dataset_id}.infrastructure_market_metrics"
 
     query = f"""
-        SELECT ticker, raw_score, thesis, relative_rank, signal, timestamp, analyst_consensus, target_price, current_price, moving_average_20d, price_to_ma_ratio, rsi, macd, macd_signal, drawdown_pct, sustained_rsi_drop, sentiment_ewma, sentiment_volatility
+        SELECT ticker, raw_score, thesis, relative_rank, signal, timestamp, analyst_consensus, target_price, current_price, moving_average_20d, price_to_ma_ratio, rsi, macd, macd_signal, drawdown_pct, sustained_rsi_drop, sentiment_ewma, sentiment_volatility, target_weight
         FROM `{table_id}`
         WHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @days DAY)
           AND signal != 'FILTERED'
@@ -439,7 +443,8 @@ def get_historical_metrics(
             "drawdown_pct": getattr(row, "drawdown_pct", None),
             "sustained_rsi_drop": getattr(row, "sustained_rsi_drop", None),
             "sentiment_ewma": getattr(row, "sentiment_ewma", None),
-            "sentiment_volatility": getattr(row, "sentiment_volatility", None)
+            "sentiment_volatility": getattr(row, "sentiment_volatility", None),
+            "target_weight": getattr(row, "target_weight", None)
         })
         
     return metrics
@@ -465,7 +470,7 @@ def get_latest_market_metrics(
     table_id = f"{client.project}.{dataset_id}.infrastructure_market_metrics"
 
     query = f"""
-        SELECT ticker, raw_score, thesis, relative_rank, signal, timestamp, analyst_consensus, target_price, current_price, moving_average_20d, price_to_ma_ratio, rsi, macd, macd_signal, drawdown_pct, sustained_rsi_drop, sentiment_ewma, sentiment_volatility
+        SELECT ticker, raw_score, thesis, relative_rank, signal, timestamp, analyst_consensus, target_price, current_price, moving_average_20d, price_to_ma_ratio, rsi, macd, macd_signal, drawdown_pct, sustained_rsi_drop, sentiment_ewma, sentiment_volatility, target_weight
         FROM `{table_id}`
         WHERE DATE(timestamp) = @target_date
         ORDER BY relative_rank DESC
@@ -500,7 +505,8 @@ def get_latest_market_metrics(
             "drawdown_pct": getattr(row, "drawdown_pct", None),
             "sustained_rsi_drop": getattr(row, "sustained_rsi_drop", None),
             "sentiment_ewma": getattr(row, "sentiment_ewma", None),
-            "sentiment_volatility": getattr(row, "sentiment_volatility", None)
+            "sentiment_volatility": getattr(row, "sentiment_volatility", None),
+            "target_weight": getattr(row, "target_weight", None)
         })
         
     return metrics
@@ -614,24 +620,25 @@ def get_recent_sentiment_scores(
     limit: int = 4, 
     dataset_id: str = "portfolio_analytics"
 ) -> Dict[str, List[float]]:
-    """Queries BigQuery and returns the historical raw sentiment scores for tickers over the last N runs."""
+    """Queries BigQuery and returns the historical average daily sentiment scores for tickers over the last N days."""
     client = get_bigquery_client()
     table_id = f"{client.project}.{dataset_id}.infrastructure_market_metrics"
     
     if not tickers:
         return {}
 
-    # Select the last N rows for the given tickers
+    # Select the daily average scores for the last N calendar days
     query = f"""
-        SELECT ticker, raw_score, timestamp
+        SELECT ticker, avg_score, date
         FROM (
-            SELECT ticker, raw_score, timestamp,
-                   ROW_NUMBER() OVER(PARTITION BY ticker ORDER BY timestamp DESC) as rn
+            SELECT ticker, AVG(raw_score) as avg_score, DATE(timestamp) as date,
+                   ROW_NUMBER() OVER(PARTITION BY ticker ORDER BY DATE(timestamp) DESC) as rn
             FROM `{table_id}`
             WHERE ticker IN UNNEST(@tickers)
+            GROUP BY ticker, date
         )
         WHERE rn <= @limit
-        ORDER BY ticker, timestamp ASC
+        ORDER BY ticker, date ASC
     """
     job_config = bigquery.QueryJobConfig(
         query_parameters=[
@@ -647,7 +654,7 @@ def get_recent_sentiment_scores(
             ticker = row.ticker
             if ticker not in scores:
                 scores[ticker] = []
-            scores[ticker].append(float(row.raw_score))
+            scores[ticker].append(float(row.avg_score))
         return scores
     except Exception:
         return {}

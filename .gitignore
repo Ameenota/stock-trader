@@ -18,3 +18,6 @@ __pycache__/
 # Scratch files
 /scratch/
 agent/scratch/
+
+# Dry run results
+**/dry_run_results_*.json

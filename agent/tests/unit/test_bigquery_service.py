@@ -79,6 +79,8 @@ def test_setup_bigquery(mock_bq_client):
     assert sentiment_table.schema[13].field_type == "FLOAT"
     assert sentiment_table.schema[14].name == "macd_signal"
     assert sentiment_table.schema[14].field_type == "FLOAT"
+    assert sentiment_table.schema[19].name == "target_weight"
+    assert sentiment_table.schema[19].field_type == "FLOAT"
 
     # Verify second table (trade_history)
     trade_table = mock_bq_client.create_table.call_args_list[1][0][0]
@@ -136,7 +138,8 @@ def test_insert_sentiment(mock_bq_client):
             "price_to_ma_ratio": 1.037,
             "rsi": 65.4,
             "macd": 1.25,
-            "macd_signal": 0.95
+            "macd_signal": 0.95,
+            "target_weight": 0.30
         },
         {
             "ticker": "SMCI",
@@ -182,7 +185,8 @@ def test_insert_sentiment(mock_bq_client):
             "drawdown_pct": None,
             "sustained_rsi_drop": None,
             "sentiment_ewma": None,
-            "sentiment_volatility": None
+            "sentiment_volatility": None,
+            "target_weight": 0.30
         },
         {
             "ticker": "SMCI",
@@ -203,7 +207,8 @@ def test_insert_sentiment(mock_bq_client):
             "drawdown_pct": None,
             "sustained_rsi_drop": None,
             "sentiment_ewma": None,
-            "sentiment_volatility": None
+            "sentiment_volatility": None,
+            "target_weight": None
         }
     ]
 
@@ -239,6 +244,7 @@ def test_get_latest_signals(mock_bq_client):
     row1.rsi = 65.4
     row1.macd = 1.25
     row1.macd_signal = 0.95
+    row1.target_weight = 0.30
 
     row2 = MagicMock()
     row2.ticker = "SMCI"
@@ -255,6 +261,7 @@ def test_get_latest_signals(mock_bq_client):
     row2.rsi = None
     row2.macd = None
     row2.macd_signal = None
+    row2.target_weight = None
 
     mock_results = [row1, row2]
     
@@ -285,12 +292,14 @@ def test_get_latest_signals(mock_bq_client):
     assert signals[0]["timestamp"] == "2026-06-24T18:00:00+00:00"
     assert signals[0]["analyst_consensus"] == "buy"
     assert signals[0]["target_price"] == 150.0
+    assert signals[0]["target_weight"] == 0.30
 
     assert signals[1]["ticker"] == "SMCI"
     assert signals[1]["signal"] == "LIQUIDATE"
     assert signals[1]["timestamp"] == "2026-06-24T18:00:00+00:00"
     assert signals[1]["analyst_consensus"] is None
     assert signals[1]["target_price"] is None
+    assert signals[1]["target_weight"] is None
 
 
 def test_insert_trade_record(mock_bq_client):

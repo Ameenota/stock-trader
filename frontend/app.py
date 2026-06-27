@@ -67,6 +67,7 @@ project = client.project
 dataset_id = "portfolio_analytics"
 
 # 3. Data Querying Helpers
+@st.cache_data(ttl=3600)
 def load_latest_snapshot() -> dict:
     """Loads the most recent portfolio snapshot from BigQuery."""
     query = f"""
@@ -106,10 +107,11 @@ def load_latest_snapshot() -> dict:
         "holdings": []
     }
 
+@st.cache_data(ttl=3600)
 def load_latest_recommendations() -> pd.DataFrame:
     """Loads the market metrics and signals from the absolute latest batch run within the last 24 hours."""
     query = f"""
-        SELECT ticker, raw_score, relative_rank, signal, current_price, moving_average_20d, analyst_consensus, thesis, timestamp
+        SELECT ticker, raw_score, relative_rank, signal, current_price, moving_average_20d, analyst_consensus, thesis, timestamp, target_weight
         FROM `{project}.{dataset_id}.infrastructure_market_metrics`
         WHERE timestamp = (
             SELECT MAX(timestamp) 
@@ -126,6 +128,7 @@ def load_latest_recommendations() -> pd.DataFrame:
         st.error(f"Error loading recommendations: {e}")
         return pd.DataFrame()
 
+@st.cache_data(ttl=3600)
 def load_latest_graveyard() -> pd.DataFrame:
     """Loads the pre-screener failed assets from the absolute latest batch run within the last 24 hours."""
     query = f"""
@@ -146,6 +149,7 @@ def load_latest_graveyard() -> pd.DataFrame:
         st.error(f"Error loading graveyard: {e}")
         return pd.DataFrame()
 
+@st.cache_data(ttl=3600)
 def load_latest_news_headlines() -> list:
     """Loads the raw news headlines from the absolute latest batch run within the last 24 hours."""
     query = f"""
@@ -178,6 +182,7 @@ def load_latest_news_headlines() -> list:
         st.error(f"Error loading news headlines: {e}")
         return []
 
+@st.cache_data(ttl=3600)
 def load_trade_history() -> pd.DataFrame:
     """Loads the entire execution trade history log."""
     query = f"""
@@ -192,6 +197,7 @@ def load_trade_history() -> pd.DataFrame:
         st.error(f"Error loading trade history: {e}")
         return pd.DataFrame()
 
+@st.cache_data(ttl=3600)
 def load_portfolio_history() -> pd.DataFrame:
     """Loads the history of portfolio total equity from BigQuery, returning the latest entry per day."""
     query = f"""
@@ -582,7 +588,7 @@ if headlines:
 
 # 5. Latest Recommendations (Full Width Custom HTML Table)
 with st.expander("📈 Daily AI Stock Recommendations", expanded=True):
-    st.markdown("<p style='font-size: 0.85rem; color: #475569; margin-top: 0rem; margin-bottom: 1rem;'>We screen our 40-stock AI sector universe daily, filtering out stocks below their 50-day SMA and ranking the remainder by price momentum. The top 10 are fully analyzed by our sentiment agent using the latest 24h news to assign conviction scores (-1.0 to +1.0) and execution signals.</p>", unsafe_allow_html=True)
+    st.markdown("<p style='font-size: 0.85rem; color: #475569; margin-top: 0rem; margin-bottom: 1rem;'>We filter our 40-stock AI universe by 50-day SMA and price momentum to select the top 10 for sentiment analysis. A Multi-Agent Critique Loop (Analyst, Risk Advisor, and Escalation Checker) then debates and refines these inputs to finalize optimal target allocations and execution signals.</p>", unsafe_allow_html=True)
     if not recs_df.empty:
         # Inject Custom Table CSS
         st.markdown("""
@@ -645,6 +651,38 @@ with st.expander("📈 Daily AI Stock Recommendations", expanded=True):
                 color: #b45309;
             }
             
+            /* Tooltip styling */
+            .tooltip {
+                position: relative;
+                display: inline-block;
+                cursor: help;
+            }
+            .tooltip .tooltiptext {
+                visibility: hidden;
+                width: 220px;
+                background-color: #0f172a;
+                color: #fff;
+                text-align: center;
+                border-radius: 6px;
+                padding: 8px;
+                position: absolute;
+                z-index: 100;
+                bottom: 125%;
+                left: 50%;
+                margin-left: -110px;
+                opacity: 0;
+                transition: opacity 0.2s;
+                font-size: 0.74rem;
+                font-weight: normal;
+                line-height: 1.35;
+                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+                white-space: normal;
+            }
+            .tooltip:hover .tooltiptext {
+                visibility: visible;
+                opacity: 1;
+            }
+            
             /* Inline Thesis Expander Styles */
             details.thesis-expander summary::-webkit-details-marker {
                 display: none !important;
@@ -671,13 +709,38 @@ with st.expander("📈 Daily AI Stock Recommendations", expanded=True):
     <table class='rec-table'>
         <thead>
             <tr>
-                <th style='width: 10%'>Ticker</th>
-                <th style='width: 14%'>News Sentiment</th>
-                <th style='width: 10%'>News Rank</th>
-                <th style='width: 12%'>Signal</th>
-                <th style='width: 12%'>Price</th>
-                <th style='width: 12%'>Consensus</th>
-                <th style='width: 30%'>Thesis</th>
+                <th style='width: 12%'>Ticker</th>
+                <th style='width: 14%; line-height: 1.25;'>
+                    <div class='tooltip'>
+                        News Sentiment <span style='font-size: 0.72rem; color: #2563eb;'>ⓘ</span>
+                        <span class='tooltiptext'>Raw sentiment score (-1.0 to +1.0) assigned by the Gemini Sentiment Agent based on 24h news.</span>
+                    </div>
+                </th>
+                <th style='width: 12%; line-height: 1.25;'>
+                    <div class='tooltip'>
+                        Signal <span style='font-size: 0.72rem; color: #2563eb;'>ⓘ</span>
+                        <span class='tooltiptext'>Action signal assigned by ranking rules: bottom 3 are liquidated; others are strong buy if sentiment > 0.2, else hold.</span>
+                    </div>
+                </th>
+                <th style='width: 11%'>Price</th>
+                <th style='width: 11%; line-height: 1.25;'>
+                    <div class='tooltip'>
+                        Analyst Consensus <span style='font-size: 0.72rem; color: #2563eb;'>ⓘ</span>
+                        <span class='tooltiptext'>Aggregated consensus recommendation key retrieved directly from Wall Street analysts via Yahoo Finance.</span>
+                    </div>
+                </th>
+                <th style='width: 13%; line-height: 1.25;'>
+                    <div class='tooltip'>
+                        AI Recommended Allocation <span style='font-size: 0.72rem; color: #2563eb;'>ⓘ</span>
+                        <span class='tooltiptext'>Target weight as a fraction of total portfolio equity, recommended by the multi-agent critique loop.</span>
+                    </div>
+                </th>
+                <th style='width: 27%; line-height: 1.25;'>
+                    <div class='tooltip'>
+                        AI Agent Thesis <span style='font-size: 0.72rem; color: #2563eb;'>ⓘ</span>
+                        <span class='tooltiptext' style='margin-left: -180px;'>Justification generated by the AI analyst based on news sentiment, analyst consensus, and technical entry rules.</span>
+                    </div>
+                </th>
             </tr>
         </thead>
         <tbody>
@@ -685,12 +748,13 @@ with st.expander("📈 Daily AI Stock Recommendations", expanded=True):
         for _, row in recs_df.iterrows():
             ticker = row["ticker"]
             score = float(row["raw_score"])
-            rank = int(row["relative_rank"])
             sig = row["signal"]
             price = row["current_price"]
             price_str = f"${price:.2f}" if pd.notnull(price) else "N/A"
             consensus = row["analyst_consensus"] or "N/A"
             thesis = row["thesis"] or ""
+            target_weight = row.get("target_weight")
+            target_weight_str = f"{target_weight * 100:.1f}%" if pd.notnull(target_weight) else "0.0%"
             
             # Badge selection
             if sig == "STRONG BUY":
@@ -705,10 +769,10 @@ with st.expander("📈 Daily AI Stock Recommendations", expanded=True):
             <tr>
                 <td><div style='display: flex; align-items: center;'>{logo_img}<a class='ticker-link' href='https://finance.yahoo.com/quote/{ticker}' target='_blank'>{ticker}</a></div></td>
                 <td>{score:+.2f}</td>
-                <td>{rank}</td>
                 <td><span class='signal-badge {badge_class}'>{sig}</span></td>
                 <td>{price_str}</td>
                 <td>{consensus}</td>
+                <td style='font-size: 0.8rem; font-weight: 600; color: #334155;'>{target_weight_str}</td>
                 <td>{format_thesis_html(thesis)}</td>
             </tr>
             """
@@ -814,7 +878,7 @@ with st.expander("💼 Executed Trade History Log", expanded=True):
     <table class='rec-table'>
         <thead>
             <tr>
-                <th style='width: 20%'>Timestamp (UTC)</th>
+                <th style='width: 20%'>Timestamp</th>
                 <th style='width: 10%'>Ticker</th>
                 <th style='width: 12%'>Action</th>
                 <th style='width: 13%'>Amount</th>
@@ -824,8 +888,13 @@ with st.expander("💼 Executed Trade History Log", expanded=True):
         <tbody>
                 """
                 for _, row in filtered_df.iterrows():
-                    # Extract and format values
-                    ts = pd.to_datetime(row["timestamp"]).strftime("%Y-%m-%d %H:%M:%S")
+                    # Extract and format values (Convert UTC to Pacific Time)
+                    from zoneinfo import ZoneInfo
+                    ts_dt = pd.to_datetime(row["timestamp"])
+                    if ts_dt.tzinfo is None:
+                        ts_dt = ts_dt.tz_localize("UTC")
+                    ts_local = ts_dt.astimezone(ZoneInfo("America/Los_Angeles"))
+                    ts = ts_local.strftime("%m/%d/%y, %I:%M %p %Z")
                     raw_ticker = row["ticker"]
                     action = row["action"]
                     amount_val = row["amount_usd"]

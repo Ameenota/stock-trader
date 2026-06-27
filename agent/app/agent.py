@@ -479,7 +479,7 @@ async def financial_analysis_pipeline(
         except Exception as e:
             print(f"   {CLR_YELLOW}Warning: Failed to dump dry run results: {e}{CLR_RESET}")
 
-    # Map decisions (signal/thesis) back to ranked_portfolio
+    # Map decisions (signal/thesis) and target weight allocations back to ranked_portfolio
     decision_map = {}
     for d in decisions:
         if isinstance(d, dict):
@@ -493,11 +493,14 @@ async def financial_analysis_pipeline(
         if ticker:
             decision_map[ticker] = {"signal": signal, "thesis": thesis}
 
+    allocation_map = {a["ticker"].strip().upper(): a["weight_pct"] for a in approved_allocations}
+
     for item in ranked_portfolio:
         ticker = item["ticker"].strip().upper()
         if ticker in decision_map:
             item["signal"] = decision_map[ticker]["signal"]
             item["thesis"] = decision_map[ticker]["thesis"]
+        item["target_weight"] = allocation_map.get(ticker, 0.0)
 
     # 4. Instantiate ExecutionController and run broker execution
     print(f"\n{CLR_BOLD}{CLR_GREEN}💸 [PHASE: 5. Execution & Portfolio Rebalancing]{CLR_RESET}")
