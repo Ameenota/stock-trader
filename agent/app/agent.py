@@ -165,7 +165,7 @@ Analyst's Draft Proposal:
 Our strict rules:
 1. Target Cash Buffer: A target cash buffer of 10% of total equity must be respected. If current cash is between 5% and 15%, do not force an adjustment.
 2. Position Sizing: The baseline target for a holding is 30% of total equity. Do not rebalance an existing holding if its current weight is within a +/- 3% tolerance of its target.
-3. Value Entries: Approve and prioritize entries for assets experiencing a drawdown of 10% or more from their 52-week high, provided their 5-day EWMA sentiment remains bullish (EWMA sentiment > 0.1).
+3. Value Entries: Approve and prioritize entries for assets experiencing a drawdown of 10% or more from their 52-week high, provided their 5-day EWMA sentiment remains bullish (EWMA sentiment > 0.1). Note: The defensive treasury bond option (TLT) is exempt from this 10% drawdown requirement.
 4. Volatility Rejection: REJECT any new allocations into assets where the 'sentiment volatility' (standard deviation) is exceptionally high (standard deviation > 0.4), indicating erratic news or pending binary events.
 5. Minimum Holding Period: REJECT any proposal to sell, reduce weight of, or liquidate an existing holding if its days_held < 21, UNLESS the ticker's EWMA sentiment score is extremely negative (below -0.5).
 
