@@ -754,7 +754,12 @@ with st.expander("📈 Daily AI Stock Recommendations", expanded=True):
             consensus = row["analyst_consensus"] or "N/A"
             thesis = row["thesis"] or ""
             target_weight = row.get("target_weight")
-            target_weight_str = f"{target_weight * 100:.1f}%" if pd.notnull(target_weight) else "0.0%"
+            if pd.notnull(target_weight) and target_weight > 0.0:
+                target_weight_str = f"{target_weight * 100:.1f}%"
+                weight_display = f"<span class='signal-badge signal-buy' style='font-weight: 700;'>{target_weight_str}</span>"
+            else:
+                target_weight_str = f"{target_weight * 100:.1f}%" if pd.notnull(target_weight) else "0.0%"
+                weight_display = f"<span style='color: #64748b; font-weight: 500;'>{target_weight_str}</span>"
             
             # Badge selection
             if sig == "STRONG BUY":
@@ -772,7 +777,7 @@ with st.expander("📈 Daily AI Stock Recommendations", expanded=True):
                 <td><span class='signal-badge {badge_class}'>{sig}</span></td>
                 <td>{price_str}</td>
                 <td>{consensus}</td>
-                <td style='font-size: 0.8rem; font-weight: 600; color: #334155;'>{target_weight_str}</td>
+                <td style='vertical-align: middle;'>{weight_display}</td>
                 <td>{format_thesis_html(thesis)}</td>
             </tr>
             """
