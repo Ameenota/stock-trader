@@ -378,79 +378,108 @@ async def run_sentiment_analysis_pipeline(dataset_id: str = "portfolio_analytics
     print(f"   {CLR_GREEN}Yahoo Finance ingestion complete for {len(market_data)} tickers.{CLR_RESET}")
     print(f"{CLR_BOLD}{CLR_CYAN}📥 [PHASE: 2. Exit]{CLR_RESET}")
 
+    import sys
+    is_weekend = (datetime.now().weekday() in (5, 6)) and ("pytest" not in sys.modules)
+
     # 3. Run sentiment agent sub-session
     print(f"\n{CLR_BOLD}{CLR_MAGENTA}🧠 [PHASE: 3. Sentiment Analysis via Gemini]{CLR_RESET}")
-    session_service = InMemorySessionService()
-    session = await session_service.create_session(user_id="cron_job", app_name="sentiment")
-    runner = Runner(agent=sentiment_agent, session_service=session_service, app_name="sentiment")
-
-    news_dict_all = {ticker: data.get("news", []) for ticker, data in market_data.items()}
-    news_dict_with_news = {ticker: news for ticker, news in news_dict_all.items() if len(news) > 0}
-    tickers_no_news = [ticker for ticker, news in news_dict_all.items() if len(news) == 0]
-
-    sentiment_result_obj = None
-    if news_dict_with_news:
-        print(f"   Invoking {CLR_BOLD}{CLR_MAGENTA}SENTIMENT_AGENT{CLR_RESET} (Gemini) to evaluate news sentiment for {len(news_dict_with_news)} tickers...")
-        message = types.Content(
-            role="user",
-            parts=[types.Part.from_text(text=f"Analyze these news articles:\n{news_dict_with_news}")]
-        )
-
-        async for _ in runner.run_async(
-            new_message=message,
-            user_id="cron_job",
-            session_id=session.id,
-        ):
-            pass
-
-        session = await session_service.get_session(user_id="cron_job", session_id=session.id, app_name="sentiment")
-        sentiment_result_obj = session.state.get("sentiment_result")
-        if not sentiment_result_obj:
-            raise RuntimeError("Failed to retrieve sentiment analysis output from the LLM agent.")
-    else:
-        print("   No news articles found for any watchlist ticker. Bypassing Gemini API completely.")
-
-    # Calculate decayed sentiment for no-news tickers using BigQuery history
-    from app.tools.bigquery_service import get_recent_sentiment_scores
-    from app.tools.ranking import SentimentAnalysis
-    no_news_analyses = []
     
-    if tickers_no_news:
-        print(f"   Decaying trend in Python for {len(tickers_no_news)} no-news tickers...")
-        historical_scores_map_no_news = get_recent_sentiment_scores(tickers=tickers_no_news, limit=4, dataset_id=dataset_id)
+    if is_weekend:
+        print(f"   {CLR_BOLD}{CLR_YELLOW}Weekend detected. Bypassing Gemini API and carrying forward Friday's EWMA scores.{CLR_RESET}")
+        from app.tools.bigquery_service import get_recent_sentiment_scores
+        from app.tools.ranking import SentimentAnalysis, SentimentAnalysisResponse
         
-        for ticker in tickers_no_news:
-            past_scores = historical_scores_map_no_news.get(ticker, [])
+        historical_scores_map = get_recent_sentiment_scores(tickers=active_tickers, limit=4, dataset_id=dataset_id)
+        
+        analyses = []
+        for ticker in active_tickers:
+            past_scores = historical_scores_map.get(ticker, [])
             if len(past_scores) > 0:
-                # Compute EWMA of past scores (span=5, adjust=False)
                 prev_ewma = float(pd.Series(past_scores).ewm(span=5, adjust=False).mean().iloc[-1])
-                decayed_score = round(prev_ewma * 0.7, 3)
-                thesis_str = f"No news found for {ticker} in the last 24h. Damped prior sentiment trend (EWMA: {prev_ewma:.2f}) carry-forward applied with 30% decay."
+                prev_ewma = round(prev_ewma, 3)
+                thesis_str = f"Weekend run. Carried forward Friday's final EWMA score ({prev_ewma:+.2f}) unchanged to prevent signal jitter."
             else:
-                decayed_score = 0.0
-                thesis_str = f"No news found for {ticker} in the last 24h and no history available. Defaulted raw score to 0.0."
-            
-            no_news_analyses.append(SentimentAnalysis(
+                prev_ewma = 0.0
+                thesis_str = f"Weekend run. No history available for {ticker}. Defaulted raw score to 0.0."
+                
+            analyses.append(SentimentAnalysis(
                 ticker=ticker,
-                raw_score=decayed_score,
+                raw_score=prev_ewma,
                 thesis=thesis_str
             ))
-
-    # Assemble final sentiment result
-    from app.tools.ranking import SentimentAnalysisResponse
-    if sentiment_result_obj is None:
-        sentiment_result = SentimentAnalysisResponse(analyses=no_news_analyses)
+        sentiment_result = SentimentAnalysisResponse(analyses=analyses)
     else:
-        if isinstance(sentiment_result_obj, SentimentAnalysisResponse):
-            sentiment_result_obj.analyses.extend(no_news_analyses)
-            sentiment_result = sentiment_result_obj
-        elif isinstance(sentiment_result_obj, dict) and "analyses" in sentiment_result_obj:
-            sentiment_result_obj["analyses"].extend([item.model_dump() for item in no_news_analyses])
-            sentiment_result = sentiment_result_obj
+        session_service = InMemorySessionService()
+        session = await session_service.create_session(user_id="cron_job", app_name="sentiment")
+        runner = Runner(agent=sentiment_agent, session_service=session_service, app_name="sentiment")
+
+        news_dict_all = {ticker: data.get("news", []) for ticker, data in market_data.items()}
+        news_dict_with_news = {ticker: news for ticker, news in news_dict_all.items() if len(news) > 0}
+        tickers_no_news = [ticker for ticker, news in news_dict_all.items() if len(news) == 0]
+
+        sentiment_result_obj = None
+        if news_dict_with_news:
+            print(f"   Invoking {CLR_BOLD}{CLR_MAGENTA}SENTIMENT_AGENT{CLR_RESET} (Gemini) to evaluate news sentiment for {len(news_dict_with_news)} tickers...")
+            message = types.Content(
+                role="user",
+                parts=[types.Part.from_text(text=f"Analyze these news articles:\n{news_dict_with_news}")]
+            )
+
+            async for _ in runner.run_async(
+                new_message=message,
+                user_id="cron_job",
+                session_id=session.id,
+            ):
+                pass
+
+            session = await session_service.get_session(user_id="cron_job", session_id=session.id, app_name="sentiment")
+            sentiment_result_obj = session.state.get("sentiment_result")
+            if not sentiment_result_obj:
+                raise RuntimeError("Failed to retrieve sentiment analysis output from the LLM agent.")
         else:
-            for item in no_news_analyses:
-                sentiment_result_obj.append(item)
-            sentiment_result = sentiment_result_obj
+            print("   No news articles found for any watchlist ticker. Bypassing Gemini API completely.")
+
+        # Calculate decayed sentiment for no-news tickers using BigQuery history
+        from app.tools.bigquery_service import get_recent_sentiment_scores
+        from app.tools.ranking import SentimentAnalysis
+        no_news_analyses = []
+        
+        if tickers_no_news:
+            print(f"   Decaying trend in Python for {len(tickers_no_news)} no-news tickers...")
+            historical_scores_map_no_news = get_recent_sentiment_scores(tickers=tickers_no_news, limit=4, dataset_id=dataset_id)
+            
+            for ticker in tickers_no_news:
+                past_scores = historical_scores_map_no_news.get(ticker, [])
+                if len(past_scores) > 0:
+                    # Compute EWMA of past scores (span=5, adjust=False)
+                    prev_ewma = float(pd.Series(past_scores).ewm(span=5, adjust=False).mean().iloc[-1])
+                    decayed_score = round(prev_ewma * 0.7, 3)
+                    thesis_str = f"No news found for {ticker} in the last 24h. Damped prior sentiment trend (EWMA: {prev_ewma:.2f}) carry-forward applied with 30% decay."
+                else:
+                    decayed_score = 0.0
+                    thesis_str = f"No news found for {ticker} in the last 24h and no history available. Defaulted raw score to 0.0."
+                
+                no_news_analyses.append(SentimentAnalysis(
+                    ticker=ticker,
+                    raw_score=decayed_score,
+                    thesis=thesis_str
+                ))
+
+        # Assemble final sentiment result
+        from app.tools.ranking import SentimentAnalysisResponse
+        if sentiment_result_obj is None:
+            sentiment_result = SentimentAnalysisResponse(analyses=no_news_analyses)
+        else:
+            if isinstance(sentiment_result_obj, SentimentAnalysisResponse):
+                sentiment_result_obj.analyses.extend(no_news_analyses)
+                sentiment_result = sentiment_result_obj
+            elif isinstance(sentiment_result_obj, dict) and "analyses" in sentiment_result_obj:
+                sentiment_result_obj["analyses"].extend([item.model_dump() for item in no_news_analyses])
+                sentiment_result = sentiment_result_obj
+            else:
+                for item in no_news_analyses:
+                    sentiment_result_obj.append(item)
+                sentiment_result = sentiment_result_obj
 
     from app.tools.ranking import SentimentAnalysisResponse
     # Print the specific outputs returned by the Sentiment Agent

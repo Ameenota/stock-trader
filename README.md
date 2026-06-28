@@ -161,10 +161,10 @@ This section provides all necessary setup, run, and deployment details to run th
 
 ### 🚦 Running the Code
 
-* **Run pytest Suite**: Verify code health and imports.
+* **Run pytest Suite**: Verify code health and imports (use `PYTHONPATH=.` to ensure internal import paths resolve correctly):
   ```bash
   cd agent
-  uv run python -m pytest
+  PYTHONPATH=. uv run pytest
   ```
 * **Run Daily Ingestion & Trading Pipeline**: Runs technical screening, news scraping, LLM sentiment ranking, LoopAgent rebalancing debate, and sequential order execution:
   ```bash

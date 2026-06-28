@@ -55,11 +55,12 @@ For each of the 10 assets on the active watchlist, the system gathers several te
 ## Phase 3: Sentiment Score Generation
 The 24-hour news stories for each watchlist ticker are analyzed by a specialized **Sentiment Agent**.
 * **Conviction Scoring**: The agent assigns a raw sentiment score ranging from **-1.0 (extremely negative)** to **+1.0 (extremely positive)**, along with a qualitative thesis.
-* **No-News Decay Bypass**: If a ticker on the active watchlist has no news articles in the last 24 hours:
+* **No-News Decay Bypass (Weekdays)**: If a ticker on the active watchlist has no news articles in the last 24 hours on a weekday:
   * The system **bypasses calling the Gemini Sentiment Agent** for this ticker (saving API tokens).
   * In Python, it automatically carries forward the trend with a **30% decay** based on the historical 5-day EWMA sentiment:
     $$\text{raw\_score} = \text{ewma\_sentiment} \times 0.7$$
     (If no historical sentiment exists, the score defaults to `0.0`).
+* **Weekend Pause State**: On Saturday and Sunday, when market activity and news volume are low, the system bypasses news ingestion, Gemini API calls, and the 30% decay rule entirely. Instead, it carries forward Friday's final EWMA score unchanged as today's raw score to prevent weekend signal decay and jitter.
 
 ---
 
@@ -84,7 +85,7 @@ The analyst determines a target portfolio layout according to these guidelines:
 * **Implicit Cash Buffer**: The remaining **10%** of total equity is left unallocated to act as a cash buffer.
 * **Defensive Asset (TLT)**: If the market environment warrants a defensive position rather than active equity, the analyst allocates to **TLT** (iShares 20+ Year Treasury Bond ETF).
 * **Dual-Path Proposing**: The analyst proposes buy allocations under one of two entry paths:
-  * **Path A (Value/Dip Entry)**: Proposed for oversold quality assets experiencing a `sustained_rsi_drop`.
+  * **Path A (Value/Dip Entry)**: Proposed for quality assets experiencing a drawdown of 10% or more from their 52-week high while maintaining a positive 5-day EWMA sentiment score (> 0.1).
   * **Path B (Momentum Breakout)**: Proposed for high-momentum assets hitting a `is_20d_high` with a `macd_bullish_cross`.
 * **Minimum Holding Period**: Cannot propose to sell, reduce, or liquidate an existing holding if it has been held for **less than 21 days**, unless its 5-day EWMA sentiment score falls below **-0.5** (extremely negative).
 
