@@ -135,7 +135,9 @@ def fetch_ticker_market_data(ticker: str, current_time: float | None = None) -> 
         "macd": None,
         "macd_signal": None,
         "drawdown_pct": None,
-        "sustained_rsi_drop": False
+        "sustained_rsi_drop": False,
+        "is_20d_high": False,
+        "macd_bullish_cross": False
     }
 
     try:
@@ -204,6 +206,16 @@ def fetch_ticker_market_data(ticker: str, current_time: float | None = None) -> 
                 if data["moving_average_20d"] and data["moving_average_20d"] > 0:
                     data["price_to_ma_ratio"] = data["current_price"] / data["moving_average_20d"]
                 
+                # Compute 20-day high breakthrough
+                try:
+                    if "High" in history.columns:
+                        high_prices = history["High"].dropna()
+                        if len(high_prices) >= 20:
+                            high_20d = float(high_prices.tail(20).max())
+                            data["is_20d_high"] = bool(data["current_price"] >= high_20d)
+                except Exception:
+                    pass
+
                 # Compute Technical Indicators (RSI & MACD) using pandas-ta
                 try:
                     rsi_series = history.ta.rsi(close="Close", length=14)
@@ -228,6 +240,17 @@ def fetch_ticker_market_data(ticker: str, current_time: float | None = None) -> 
                         macd_sig_val = macd_df.iloc[-1].get("MACDs_12_26_9")
                         data["macd"] = float(macd_val) if pd.notnull(macd_val) else None
                         data["macd_signal"] = float(macd_sig_val) if pd.notnull(macd_sig_val) else None
+
+                        # Compute MACD bullish cross today
+                        if len(macd_df) >= 2:
+                            macd_col = "MACD_12_26_9"
+                            sig_col = "MACDs_12_26_9"
+                            macd_today = macd_df.iloc[-1].get(macd_col)
+                            sig_today = macd_df.iloc[-1].get(sig_col)
+                            macd_yest = macd_df.iloc[-2].get(macd_col)
+                            sig_yest = macd_df.iloc[-2].get(sig_col)
+                            if pd.notnull(macd_today) and pd.notnull(sig_today) and pd.notnull(macd_yest) and pd.notnull(sig_yest):
+                                data["macd_bullish_cross"] = bool(macd_yest <= sig_yest and macd_today > sig_today)
                 except Exception:
                     pass
     except Exception:
@@ -340,6 +363,8 @@ async def run_sentiment_analysis_pipeline(dataset_id: str = "portfolio_analytics
     from app.agent import sentiment_agent
     from app.tools.ranking import process_sentiment_rankings
     from app.tools.ticker_universe import determine_active_watchlist
+    import pandas as pd
+    import numpy as np
 
     # 1. Dynamically determine the watchlist and get details for all universe assets
     print(f"\n{CLR_BOLD}{CLR_CYAN}📥 [PHASE: 2. Ingestion & Watchlist Screening]{CLR_RESET}")
@@ -355,29 +380,77 @@ async def run_sentiment_analysis_pipeline(dataset_id: str = "portfolio_analytics
 
     # 3. Run sentiment agent sub-session
     print(f"\n{CLR_BOLD}{CLR_MAGENTA}🧠 [PHASE: 3. Sentiment Analysis via Gemini]{CLR_RESET}")
-    print(f"   Invoking {CLR_BOLD}{CLR_MAGENTA}SENTIMENT_AGENT{CLR_RESET} (Gemini) to evaluate news sentiment...")
     session_service = InMemorySessionService()
     session = await session_service.create_session(user_id="cron_job", app_name="sentiment")
     runner = Runner(agent=sentiment_agent, session_service=session_service, app_name="sentiment")
 
-    news_dict = {ticker: data.get("news", []) for ticker, data in market_data.items()}
+    news_dict_all = {ticker: data.get("news", []) for ticker, data in market_data.items()}
+    news_dict_with_news = {ticker: news for ticker, news in news_dict_all.items() if len(news) > 0}
+    tickers_no_news = [ticker for ticker, news in news_dict_all.items() if len(news) == 0]
 
-    message = types.Content(
-        role="user",
-        parts=[types.Part.from_text(text=f"Analyze these news articles:\n{news_dict}")]
-    )
+    sentiment_result_obj = None
+    if news_dict_with_news:
+        print(f"   Invoking {CLR_BOLD}{CLR_MAGENTA}SENTIMENT_AGENT{CLR_RESET} (Gemini) to evaluate news sentiment for {len(news_dict_with_news)} tickers...")
+        message = types.Content(
+            role="user",
+            parts=[types.Part.from_text(text=f"Analyze these news articles:\n{news_dict_with_news}")]
+        )
 
-    async for _ in runner.run_async(
-        new_message=message,
-        user_id="cron_job",
-        session_id=session.id,
-    ):
-        pass
+        async for _ in runner.run_async(
+            new_message=message,
+            user_id="cron_job",
+            session_id=session.id,
+        ):
+            pass
 
-    session = await session_service.get_session(user_id="cron_job", session_id=session.id, app_name="sentiment")
-    sentiment_result = session.state.get("sentiment_result")
-    if not sentiment_result:
-        raise RuntimeError("Failed to retrieve sentiment analysis output from the LLM agent.")
+        session = await session_service.get_session(user_id="cron_job", session_id=session.id, app_name="sentiment")
+        sentiment_result_obj = session.state.get("sentiment_result")
+        if not sentiment_result_obj:
+            raise RuntimeError("Failed to retrieve sentiment analysis output from the LLM agent.")
+    else:
+        print("   No news articles found for any watchlist ticker. Bypassing Gemini API completely.")
+
+    # Calculate decayed sentiment for no-news tickers using BigQuery history
+    from app.tools.bigquery_service import get_recent_sentiment_scores
+    from app.tools.ranking import SentimentAnalysis
+    no_news_analyses = []
+    
+    if tickers_no_news:
+        print(f"   Decaying trend in Python for {len(tickers_no_news)} no-news tickers...")
+        historical_scores_map_no_news = get_recent_sentiment_scores(tickers=tickers_no_news, limit=4, dataset_id=dataset_id)
+        
+        for ticker in tickers_no_news:
+            past_scores = historical_scores_map_no_news.get(ticker, [])
+            if len(past_scores) > 0:
+                # Compute EWMA of past scores (span=5, adjust=False)
+                prev_ewma = float(pd.Series(past_scores).ewm(span=5, adjust=False).mean().iloc[-1])
+                decayed_score = round(prev_ewma * 0.7, 3)
+                thesis_str = f"No news found for {ticker} in the last 24h. Damped prior sentiment trend (EWMA: {prev_ewma:.2f}) carry-forward applied with 30% decay."
+            else:
+                decayed_score = 0.0
+                thesis_str = f"No news found for {ticker} in the last 24h and no history available. Defaulted raw score to 0.0."
+            
+            no_news_analyses.append(SentimentAnalysis(
+                ticker=ticker,
+                raw_score=decayed_score,
+                thesis=thesis_str
+            ))
+
+    # Assemble final sentiment result
+    from app.tools.ranking import SentimentAnalysisResponse
+    if sentiment_result_obj is None:
+        sentiment_result = SentimentAnalysisResponse(analyses=no_news_analyses)
+    else:
+        if isinstance(sentiment_result_obj, SentimentAnalysisResponse):
+            sentiment_result_obj.analyses.extend(no_news_analyses)
+            sentiment_result = sentiment_result_obj
+        elif isinstance(sentiment_result_obj, dict) and "analyses" in sentiment_result_obj:
+            sentiment_result_obj["analyses"].extend([item.model_dump() for item in no_news_analyses])
+            sentiment_result = sentiment_result_obj
+        else:
+            for item in no_news_analyses:
+                sentiment_result_obj.append(item)
+            sentiment_result = sentiment_result_obj
 
     from app.tools.ranking import SentimentAnalysisResponse
     # Print the specific outputs returned by the Sentiment Agent
@@ -431,6 +504,8 @@ async def run_sentiment_analysis_pipeline(dataset_id: str = "portfolio_analytics
         item["macd_signal"] = ticker_data.get("macd_signal")
         item["drawdown_pct"] = ticker_data.get("drawdown_pct")
         item["sustained_rsi_drop"] = ticker_data.get("sustained_rsi_drop")
+        item["is_20d_high"] = ticker_data.get("is_20d_high")
+        item["macd_bullish_cross"] = ticker_data.get("macd_bullish_cross")
 
         # Get historical scores, append today's, and calculate 5-day EWMA & Volatility
         past_scores = historical_scores_map.get(ticker, [])
@@ -446,6 +521,12 @@ async def run_sentiment_analysis_pipeline(dataset_id: str = "portfolio_analytics
             
         item["sentiment_ewma"] = ewma_val
         item["sentiment_volatility"] = volatility_val
+
+        # Absolute sentiment floor override for relative rank liquidations
+        if item["signal"] == "LIQUIDATE" and ewma_val >= 0.05:
+            item["signal"] = "HOLD"
+            orig_thesis = item.get("thesis", "")
+            item["thesis"] = orig_thesis + f" [Liquidation Override: Spurious relative rank liquidation blocked because 5-day EWMA sentiment (+{ewma_val:.3f}) is positive/neutral.]"
 
     # 5. Build placeholder rows for the filtered graveyard assets to prove LLM token savings
     graveyard_rows = []
@@ -470,7 +551,9 @@ async def run_sentiment_analysis_pipeline(dataset_id: str = "portfolio_analytics
                 "drawdown_pct": None,
                 "sustained_rsi_drop": False,
                 "sentiment_ewma": 0.0,
-                "sentiment_volatility": 0.0
+                "sentiment_volatility": 0.0,
+                "is_20d_high": False,
+                "macd_bullish_cross": False
             })
 
     # 6. Ingest and log SPY benchmark data
@@ -498,7 +581,9 @@ async def run_sentiment_analysis_pipeline(dataset_id: str = "portfolio_analytics
                 "drawdown_pct": None,
                 "sustained_rsi_drop": False,
                 "sentiment_ewma": 0.0,
-                "sentiment_volatility": 0.0
+                "sentiment_volatility": 0.0,
+                "is_20d_high": False,
+                "macd_bullish_cross": False
             })
     except Exception as e:
         print(f"   {CLR_YELLOW}Warning: Failed to ingest SPY: {e}{CLR_RESET}")

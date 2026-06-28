@@ -108,10 +108,23 @@ async def determine_active_watchlist(dataset_id: str = "portfolio_analytics", re
                 if len(close_prices) >= 50:
                     sma_50 = float(close_prices.tail(50).mean())
                     current_price = float(close_prices.iloc[-1])
+                    
+                    # Compute RSI using pandas_ta
+                    import pandas as pd
+                    import pandas_ta as ta
+                    rsi_val = None
+                    try:
+                        rsi_series = df.ta.rsi(close="Close", length=14)
+                        if rsi_series is not None and not rsi_series.empty:
+                            rsi_val = float(rsi_series.iloc[-1])
+                    except Exception:
+                        pass
+                        
                     return {
                         "ticker": ticker,
                         "current_price": current_price,
                         "sma_50": sma_50,
+                        "rsi": rsi_val,
                         "momentum": current_price / sma_50
                     }
         except Exception:
@@ -122,11 +135,13 @@ async def determine_active_watchlist(dataset_id: str = "portfolio_analytics", re
     tasks = [fetch_sma_and_momentum(t) for t in candidates]
     results = await asyncio.gather(*tasks)
 
-    # 4. Filter and score candidate stocks (must be trading above 50-day SMA)
+    # 4. Filter and score candidate stocks (must be trading above 50-day SMA OR deeply oversold)
     valid_candidates = []
     for r in results:
-        if r is not None and r["current_price"] > r["sma_50"]:
-            valid_candidates.append(r)
+        if r is not None:
+            is_oversold = r["rsi"] is not None and r["rsi"] < 25
+            if r["current_price"] > r["sma_50"] or is_oversold:
+                valid_candidates.append(r)
 
     # 5. Sort valid candidates by momentum descending (highest score first)
     valid_candidates.sort(key=lambda x: x["momentum"], reverse=True)

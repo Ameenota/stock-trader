@@ -72,7 +72,7 @@ graph TD
 * **Allowed Ticker Universe**: Restricts trade execution to a centralized **40-stock universe** of liquid, large-cap AI core (NVDA, AMD, AVGO), chip foundry/memory (TSM, MU, ASML), cloud providers (MSFT, GOOGL, AMZN), grid power utilities (CEG, VST, ETN), and enterprise AI software/security (PLTR, CRWD) stocks.
 * **Dynamic Active Watchlist**: A python-based pre-screener dynamically constructs the daily active list of 10 tickers from the 40-stock universe:
   1. It fetches current portfolio holdings from BigQuery and forces them to be on the watchlist so they are monitored for hold/sell decisions.
-  2. It downloads price history for candidates and filters out stocks trading below their **50-day Simple Moving Average (SMA)**.
+  2. It downloads price history for candidates and filters out stocks trading below their **50-day Simple Moving Average (SMA)**, **UNLESS** they are deeply oversold with a 14-day RSI $< 25$ (allowing value entries on deep pullbacks).
   3. It ranks remaining candidates by trend momentum ($\text{price} / \text{50-day SMA}$) and selects the top performers, padding with core defaults as needed.
 * **Token & Cost Efficiency**: The heavy news scraping and LLM sentiment analysis are run **only** on the dynamically generated 10 active tickers (using 0 LLM tokens during screening), keeping API costs low and predictable.
 * **Sandbox Limit**: Execution budget capped at **$100** total starting equity.
@@ -94,27 +94,25 @@ graph TD
 ### Stage 1: Technical Screening & Filtering
 Every day, a lightweight Python pre-screener scans the 40 stocks in the centralized allowed universe. This scan uses raw price data via `yfinance` (**0 LLM tokens**):
 1.  **Holdings Override**: It checks the latest BigQuery portfolio snapshot. Any stock we currently own is automatically promoted to the watchlist so it is monitored for hold/sell decisions.
-2.  **SMA Trend Filter**: Non-owned candidate stocks are filtered out if they are trading below their **50-day Simple Moving Average (SMA)**, avoiding declining stocks.
+2.  **SMA Trend Filter & RSI Bypass**: Non-owned candidate stocks are filtered out if they are trading below their **50-day Simple Moving Average (SMA)**, **UNLESS** they are deeply oversold (14-day RSI $< 25$). This exception allows promoting high-quality value plays on deep corrections.
 3.  **Momentum Ranking**: The remaining candidates are scored by trend momentum ($\text{price} / \text{50-day SMA}$). The top performers are selected to fill the remaining slots.
 4.  **Watchlist Padding**: If fewer than 10 stocks pass, core defaults (like `NVDA`, `AMD`, and the hedge `TLT`) pad the list to ensure exactly **10 active tickers** are analyzed.
 
-### Stage 2: Sentiment Analysis
-The pipeline fetches the latest 24 hours of news for the 10 active watchlist tickers and passes it to the **Sentiment Agent** (Gemini-Flash):
-*   **Conviction Score**: The agent assigns a raw sentiment score from `-1.0` (highly bearish news) to `+1.0` (highly bullish news).
-*   **Deterministic Sorting**: Python code sorts the assets by sentiment score and assigns a relative rank from `1` (lowest score) to `10` (highest score).
-*   **Core Signals**:
-    *   **LIQUIDATE**: Assigned to bottom-ranked assets (Ranks 1, 2, 3).
-    *   **STRONG BUY**: Assigned to top-ranked assets (Ranks 4-10) only if the sentiment score exceeds `0.2`.
-    *   **HOLD**: Assigned to top-ranked assets with flat/uncertain sentiment scores ($\le 0.2$).
+### Stage 2: Sentiment Ingestion & Decay
+The pipeline fetches the latest 24 hours of news for the 10 active watchlist tickers. To save API costs, we partition the watchlist:
+*   **Bypass & Decay**: If a stock has **no news** in the last 24h, the pipeline **bypasses Gemini** and mathematically decays its prior 5-day EWMA sentiment score by **30%** ($\text{score} = \text{EWMA} \times 0.7$) in Python.
+*   **Gemini Ingestion**: If news exists, the news is passed to the **Sentiment Agent** (Gemini-Flash) to score conviction from `-1.0` to `+1.0`.
+*   **Relative Ranking & Liquidation Floor**: Python sorts the 10 tickers by conviction and assigns a relative rank (1-10). The bottom 3 (ranks 1-3) receive a **`LIQUIDATE`** signal, **UNLESS** their 5-day EWMA sentiment is positive/neutral ($\ge +0.05$). If EWMA is $\ge +0.05$, the signal is overridden to **`HOLD`** to prevent spurious relative-rank liquidations.
 
-### Stage 3: Multi-Agent Critique Loop & Decoupled Execution
-Instead of executing trades directly from LLM prompts, the target state is debated and finalized by a multi-agent critique loop, then executed deterministically:
-1. **Portfolio Analyst Agent**: Proposes target stock allocations (percentages of total equity) based on today's watchlist and weekly metrics.
-2. **Senior Risk Advisor Agent (Critic)**: Enforces strict trading rules and risk mandates:
-   * **Value Entries**: Approve and prioritize entries for assets experiencing a drawdown of **10% or more** from their 52-week high, provided their 5-day Exponential Moving Average (EWMA) sentiment remains bullish (`EWMA > 0.1`).
-   * **Volatility Rejection**: Reject any new allocations into assets where the sentiment volatility (5-day standard deviation) is exceptionally high (`volatility > 0.4`), preventing exposure to speculative binary news events.
-   * **Minimum Holding Period**: Protect existing positions by rejecting any proposal to sell or liquidate an asset if its `days_held < 21 days`, unless its weekly sentiment EWMA falls below `-0.5`.
-   * **Cash and Position Sizing**: Enforces a target cash buffer of 10% of total equity (5%-15% tolerance range) and a position tolerance of +/- 3% to prevent minor portfolio churn.
+### Stage 3: Multi-Agent Debate (Dual-Path Entry)
+The target state is debated and finalized by a multi-agent critique loop:
+1. **Portfolio Analyst Agent**: Proposes target stock allocations (percentages of total equity) based on today's watchlist and weekly metrics under one of two paths:
+   * **Path A (Value/Dip Entry)**: Proposed for oversold pullbacks (RSI $< 30$).
+   * **Path B (Momentum Breakout)**: Proposed for stocks hitting a 20-day high with a MACD bullish cross.
+2. **Senior Risk Advisor Agent (Critic)**: Enforces path-dependent gates:
+   * **For Path A**: Enforces the $\ge 10\%$ drawdown gate and $\le 0.4$ sentiment volatility gate.
+   * **For Path B**: Bypasses the drawdown gate (allowing entry near all-time highs) and the 0.4 sentiment volatility gate (raising it to 0.85), provided breakout indicators are active.
+   * **Minimum Holding Period**: Cannot exit positions held for $< 21$ days unless sentiment EWMA falls below $-0.5$.
 3. **Escalation Checker**: Custom `BaseAgent` that terminates the LoopAgent when the proposal receives approval from the Advisor.
 4. **Execution Controller**: Evaluates target weights vs current holdings and schedules trades sequentially (sells first, then buys) via the Robinhood MCP server.
 

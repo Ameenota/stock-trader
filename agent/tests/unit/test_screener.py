@@ -66,8 +66,9 @@ async def test_determine_active_watchlist_filters_sma_and_sorts_momentum(mock_ti
             prices = [50.0] * 49 + [60.0]
             mock_ticker.history.return_value = pd.DataFrame({"Close": prices})
         elif ticker == "AMZN":
-            # Downward trend: SMA is ~100, current price is 80 (momentum = 0.8, should be filtered out)
-            prices = [100.0] * 49 + [80.0]
+            # Downward trend: SMA is ~104, current price is 80 (momentum = 0.77, should be filtered out).
+            # Last 25 days alternate to introduce gains and keep RSI at ~50 (avoiding the <25 oversold bypass).
+            prices = [120.0] * 35 + ([80.0, 82.0] * 12) + [80.0]
             mock_ticker.history.return_value = pd.DataFrame({"Close": prices})
         elif ticker == "PLTR":
             # High rising trend: SMA is ~20, current price is 30 (momentum = 1.5)

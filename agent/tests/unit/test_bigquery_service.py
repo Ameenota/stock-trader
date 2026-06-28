@@ -186,7 +186,9 @@ def test_insert_sentiment(mock_bq_client):
             "sustained_rsi_drop": None,
             "sentiment_ewma": None,
             "sentiment_volatility": None,
-            "target_weight": 0.30
+            "target_weight": 0.30,
+            "is_20d_high": None,
+            "macd_bullish_cross": None
         },
         {
             "ticker": "SMCI",
@@ -208,7 +210,9 @@ def test_insert_sentiment(mock_bq_client):
             "sustained_rsi_drop": None,
             "sentiment_ewma": None,
             "sentiment_volatility": None,
-            "target_weight": None
+            "target_weight": None,
+            "is_20d_high": None,
+            "macd_bullish_cross": None
         }
     ]
 

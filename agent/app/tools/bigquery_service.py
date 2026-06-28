@@ -65,6 +65,8 @@ def setup_bigquery(dataset_id: str = "portfolio_analytics") -> None:
         bigquery.SchemaField("sentiment_ewma", "FLOAT", mode="NULLABLE"),
         bigquery.SchemaField("sentiment_volatility", "FLOAT", mode="NULLABLE"),
         bigquery.SchemaField("target_weight", "FLOAT", mode="NULLABLE"),
+        bigquery.SchemaField("is_20d_high", "BOOLEAN", mode="NULLABLE"),
+        bigquery.SchemaField("macd_bullish_cross", "BOOLEAN", mode="NULLABLE"),
     ]
     sentiment_table = bigquery.Table(sentiment_table_id, schema=sentiment_schema)
     try:
@@ -207,6 +209,12 @@ def insert_sentiment(
         sentiment_ewma_val = _safe_float(item.get("sentiment_ewma"))
         sentiment_volatility_val = _safe_float(item.get("sentiment_volatility"))
         target_weight_val = _safe_float(item.get("target_weight"))
+        is_20d_high_val = item.get("is_20d_high")
+        if is_20d_high_val is not None:
+            is_20d_high_val = bool(is_20d_high_val)
+        macd_bullish_cross_val = item.get("macd_bullish_cross")
+        if macd_bullish_cross_val is not None:
+            macd_bullish_cross_val = bool(macd_bullish_cross_val)
 
         rows_to_insert.append({
             "ticker": item["ticker"],
@@ -228,7 +236,9 @@ def insert_sentiment(
             "sustained_rsi_drop": sustained_rsi_drop_val,
             "sentiment_ewma": sentiment_ewma_val,
             "sentiment_volatility": sentiment_volatility_val,
-            "target_weight": target_weight_val
+            "target_weight": target_weight_val,
+            "is_20d_high": is_20d_high_val,
+            "macd_bullish_cross": macd_bullish_cross_val
         })
         
     try:
@@ -406,7 +416,7 @@ def get_historical_metrics(
     table_id = f"{client.project}.{dataset_id}.infrastructure_market_metrics"
 
     query = f"""
-        SELECT ticker, raw_score, thesis, relative_rank, signal, timestamp, analyst_consensus, target_price, current_price, moving_average_20d, price_to_ma_ratio, rsi, macd, macd_signal, drawdown_pct, sustained_rsi_drop, sentiment_ewma, sentiment_volatility, target_weight
+        SELECT ticker, raw_score, thesis, relative_rank, signal, timestamp, analyst_consensus, target_price, current_price, moving_average_20d, price_to_ma_ratio, rsi, macd, macd_signal, drawdown_pct, sustained_rsi_drop, sentiment_ewma, sentiment_volatility, target_weight, is_20d_high, macd_bullish_cross
         FROM `{table_id}`
         WHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @days DAY)
           AND signal != 'FILTERED'
@@ -444,7 +454,9 @@ def get_historical_metrics(
             "sustained_rsi_drop": getattr(row, "sustained_rsi_drop", None),
             "sentiment_ewma": getattr(row, "sentiment_ewma", None),
             "sentiment_volatility": getattr(row, "sentiment_volatility", None),
-            "target_weight": getattr(row, "target_weight", None)
+            "target_weight": getattr(row, "target_weight", None),
+            "is_20d_high": getattr(row, "is_20d_high", None),
+            "macd_bullish_cross": getattr(row, "macd_bullish_cross", None)
         })
         
     return metrics
@@ -470,7 +482,7 @@ def get_latest_market_metrics(
     table_id = f"{client.project}.{dataset_id}.infrastructure_market_metrics"
 
     query = f"""
-        SELECT ticker, raw_score, thesis, relative_rank, signal, timestamp, analyst_consensus, target_price, current_price, moving_average_20d, price_to_ma_ratio, rsi, macd, macd_signal, drawdown_pct, sustained_rsi_drop, sentiment_ewma, sentiment_volatility, target_weight
+        SELECT ticker, raw_score, thesis, relative_rank, signal, timestamp, analyst_consensus, target_price, current_price, moving_average_20d, price_to_ma_ratio, rsi, macd, macd_signal, drawdown_pct, sustained_rsi_drop, sentiment_ewma, sentiment_volatility, target_weight, is_20d_high, macd_bullish_cross
         FROM `{table_id}`
         WHERE DATE(timestamp) = @target_date
         ORDER BY relative_rank DESC
@@ -506,7 +518,9 @@ def get_latest_market_metrics(
             "sustained_rsi_drop": getattr(row, "sustained_rsi_drop", None),
             "sentiment_ewma": getattr(row, "sentiment_ewma", None),
             "sentiment_volatility": getattr(row, "sentiment_volatility", None),
-            "target_weight": getattr(row, "target_weight", None)
+            "target_weight": getattr(row, "target_weight", None),
+            "is_20d_high": getattr(row, "is_20d_high", None),
+            "macd_bullish_cross": getattr(row, "macd_bullish_cross", None)
         })
         
     return metrics

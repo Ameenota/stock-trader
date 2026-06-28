@@ -145,7 +145,9 @@ Propose target allocations for stocks as percentages of total equity (e.g. 0.30 
 
 Trading Rules to follow:
 1. Focus on the Trend: Base your conviction on the '5-day EWMA Sentiment' rather than volatile daily spikes.
-2. Technical Entry: Prioritize entries where the 'sustained_rsi_drop' flag is TRUE (RSI < 30 for 3+ consecutive days) to confirm structural drawdowns.
+2. Technical Entry: You have two valid entry paths for new allocations:
+   - **Path A (Value/Dip Entry)**: Propose entries where the 'sustained_rsi_drop' flag is TRUE (RSI < 30 for 3+ consecutive days) to confirm structural drawdowns.
+   - **Path B (Momentum Breakout)**: Propose entries where 'is_20d_high' is TRUE and 'macd_bullish_cross' is TRUE to participate in strong momentum breakout runs.
 3. Minimum Holding Period: Do NOT propose to sell, reduce weight of, or liquidate any stock in "Current Holdings" if its `days_held` is less than 21 days, UNLESS its EWMA sentiment score is extremely negative (below -0.5).
 
 Your proposal must output a list of TargetAllocation objects under the `allocations` key. You must also output the final signals and theses for all watchlist assets under the `decisions` key.
@@ -165,9 +167,11 @@ Analyst's Draft Proposal:
 Our strict rules:
 1. Target Cash Buffer: A target cash buffer of 10% of total equity must be respected. If current cash is between 5% and 15%, do not force an adjustment.
 2. Position Sizing: The baseline target for a holding is 30% of total equity. Do not rebalance an existing holding if its current weight is within a +/- 3% tolerance of its target.
-3. Value Entries: Approve and prioritize entries for assets experiencing a drawdown of 10% or more from their 52-week high, provided their 5-day EWMA sentiment remains bullish (EWMA sentiment > 0.1). Note: The defensive treasury bond option (TLT) is exempt from this 10% drawdown requirement.
-4. Volatility Rejection: REJECT any new allocations into assets where the 'sentiment volatility' (standard deviation) is exceptionally high (standard deviation > 0.4), indicating erratic news or pending binary events.
-5. Minimum Holding Period: REJECT any proposal to sell, reduce weight of, or liquidate an existing holding if its days_held < 21, UNLESS the ticker's EWMA sentiment score is extremely negative (below -0.5).
+3. Path-Dependent Entry Gating:
+   - **For Path A (Value/Dip Entry)**: Approve entries if the asset has a drawdown of 10% or more from its 52-week high, and its 5-day EWMA sentiment is bullish (EWMA sentiment > 0.1). REJECT the allocation if 'sentiment_volatility' is > 0.4.
+   - **For Path B (Momentum Breakout Entry)**: Approve entries regardless of drawdown (drawdown can be < 10% / near all-time highs) and bypass the 0.4 sentiment volatility gate (accepting volatility up to 0.85), provided that `is_20d_high` is TRUE and `macd_bullish_cross` is TRUE.
+   Note: The defensive treasury bond option (TLT) is exempt from the 10% drawdown requirement.
+4. Minimum Holding Period: REJECT any proposal to sell, reduce weight of, or liquidate an existing holding if its days_held < 21, UNLESS the ticker's EWMA sentiment score is extremely negative (below -0.5).
 
 Output format:
 You must output a structured review matching the AdvisorCritique schema. If you reject the proposal, you must provide explicit, mathematically sound feedback so the analyst can correct the weights in the next iteration.
