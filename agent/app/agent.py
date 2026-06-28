@@ -273,7 +273,7 @@ async def financial_analysis_pipeline(
     # Resolve target account ending in 48661 from environment variables
     account_number = os.environ.get("ROBINHOOD_ACCOUNT_NUMBER")
     if not account_number:
-        if os.environ.get("SKIP_LIVE_TRADES", "false").lower() == "true":
+        if os.environ.get("SKIP_LIVE_TRADES", "true").lower() == "true":
             account_number = "MOCK_ACCOUNT_48661"
         else:
             raise RuntimeError("Security Guardrail: ROBINHOOD_ACCOUNT_NUMBER environment variable is not set.")
@@ -290,7 +290,7 @@ async def financial_analysis_pipeline(
     total_equity = total_cash + holdings_value
     current_cash_pct = (total_cash / total_equity) * 100 if total_equity > 0 else 0.0
 
-    is_dry_run = os.environ.get("SKIP_LIVE_TRADES", "false").lower() == "true"
+    is_dry_run = os.environ.get("SKIP_LIVE_TRADES", "true").lower() == "true"
     
     # Calculate days_held for each holding from trade history
     from app.tools.bigquery_service import get_last_buy_timestamp, get_recent_trades

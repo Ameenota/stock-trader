@@ -190,7 +190,7 @@ class ExecutionController:
             print(f"\n{CLR_BOLD}{CLR_RED}[EXECUTION] Selling {shares_str} shares of {ticker} (${amt:.2f}). Reason: {reason}{CLR_RESET}")
             
             # Enforce double account guardrails & dry-run interceptor
-            if os.environ.get("SKIP_LIVE_TRADES", "false").lower() == "true":
+            if os.environ.get("SKIP_LIVE_TRADES", "true").lower() == "true":
                 print(f"{CLR_YELLOW}[DRY_RUN] Intercepted place_equity_order and simulated success for {ticker}{CLR_RESET}")
                 action = "LIQUIDATE" if sell["liquidate"] else "SELL"
                 insert_trade_record(
@@ -229,7 +229,7 @@ class ExecutionController:
                         print(f"   {CLR_RED}[ERROR] Place sell order failed: {e}{CLR_RESET}")
 
         # Calculate spendable buying power
-        is_dry_run = os.environ.get("SKIP_LIVE_TRADES", "false").lower() == "true"
+        is_dry_run = os.environ.get("SKIP_LIVE_TRADES", "true").lower() == "true"
         if is_dry_run:
             total_sell_usd = sum(sell["amount_usd"] for sell in sells)
             effective_buying_power = total_cash + total_sell_usd
@@ -263,7 +263,7 @@ class ExecutionController:
                 print(f"\n{CLR_BOLD}{CLR_GREEN}[EXECUTION] Buying {shares_str} shares of {ticker} (${buy['amount_usd']:.2f}). Reason: {reason}{CLR_RESET}")
                 
                 # Enforce double account guardrails & dry-run interceptor
-                if os.environ.get("SKIP_LIVE_TRADES", "false").lower() == "true":
+                if os.environ.get("SKIP_LIVE_TRADES", "true").lower() == "true":
                     print(f"{CLR_YELLOW}[DRY_RUN] Intercepted place_equity_order and simulated success for {ticker}{CLR_RESET}")
                     insert_trade_record(
                         ticker=ticker,

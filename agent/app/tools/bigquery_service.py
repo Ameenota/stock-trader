@@ -341,7 +341,7 @@ def insert_trade_record(
     timestamp_str = datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
 
     if dry_run is None:
-        dry_run = os.environ.get("SKIP_LIVE_TRADES", "false").lower() == "true"
+        dry_run = os.environ.get("SKIP_LIVE_TRADES", "true").lower() == "true"
 
     row_to_insert = {
         "ticker": ticker,

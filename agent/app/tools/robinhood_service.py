@@ -60,7 +60,7 @@ async def validate_and_intercept_trades(tool, args, tool_context) -> dict | None
                     )
 
     # 3. Dry-Run Interceptor: block order modifications and return simulated success
-    if os.environ.get("SKIP_LIVE_TRADES", "false").lower() == "true":
+    if os.environ.get("SKIP_LIVE_TRADES", "true").lower() == "true":
         tool_name = tool.name.lower()
         if "insert_trade_record" not in tool_name:
             if any(action in tool_name for action in ["order", "buy", "sell", "trade", "execute", "cancel"]):
@@ -159,7 +159,7 @@ async def log_portfolio_snapshot(dataset_id: str = "portfolio_analytics") -> Non
     # Resolve target account ending in 48661
     account_number = os.environ.get("ROBINHOOD_ACCOUNT_NUMBER")
     if not account_number:
-        if os.environ.get("SKIP_LIVE_TRADES", "false").lower() == "true":
+        if os.environ.get("SKIP_LIVE_TRADES", "true").lower() == "true":
             account_number = "MOCK_ACCOUNT_48661"
         else:
             raise RuntimeError("Security Guardrail: ROBINHOOD_ACCOUNT_NUMBER environment variable is not set.")
