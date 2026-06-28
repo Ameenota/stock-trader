@@ -643,12 +643,16 @@ def get_recent_sentiment_scores(
 
     # Select the daily average scores for the last N calendar days
     query = f"""
-        SELECT ticker, avg_score, date
-        FROM (
-            SELECT ticker, AVG(raw_score) as avg_score, DATE(timestamp) as date,
-                   ROW_NUMBER() OVER(PARTITION BY ticker ORDER BY DATE(timestamp) DESC) as rn
+        WITH daily_scores AS (
+            SELECT ticker, raw_score, DATE(timestamp) as date
             FROM `{table_id}`
             WHERE ticker IN UNNEST(@tickers)
+        )
+        SELECT ticker, avg_score, date
+        FROM (
+            SELECT ticker, AVG(raw_score) as avg_score, date,
+                   ROW_NUMBER() OVER(PARTITION BY ticker ORDER BY date DESC) as rn
+            FROM daily_scores
             GROUP BY ticker, date
         )
         WHERE rn <= @limit
