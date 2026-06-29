@@ -14,21 +14,22 @@ The trading system follows a six-phase daily pipeline:
 ---
 
 ## Phase 1: Watchlist Screening (Pre-Filtering & Momentum)
-Rather than executing resource-intensive sentiment analysis on the entire allowable universe of 40 AI-sector and grid infrastructure assets, the system dynamically filters the universe down to a refined **10-stock active watchlist** using the following screening criteria:
+Rather than executing resource-intensive sentiment analysis on the entire allowable universe of 41 AI-sector and grid infrastructure assets, the system dynamically filters the universe down to a refined **11-stock active watchlist** using the following screening criteria:
 
 1. **Owned Position Promotion**: Any stock currently held in the portfolio is automatically force-included in the active watchlist.
-2. **Trend Filter (50-Day SMA Gate)**: Candidate (non-owned) stocks must be trading **above their 50-day Simple Moving Average (SMA)**, **UNLESS** they are deeply oversold with a 14-day RSI $< 25$. If they meet this oversold exception, they bypass the SMA gate and are promoted to the active watchlist (allowing high-quality value entry on deep pullbacks).
-3. **Momentum Scoring**: The remaining candidates that passed either the SMA trend filter or the RSI oversold bypass are scored and ranked based on a momentum ratio:
+2. **Recently Sold Live Asset Filter (Cool-down)**: To reduce reactiveness and avoid rapid buy-sell-buy chop, any asset that has been sold or liquidated as a live trade (`dry_run = FALSE` in BigQuery's `trade_history` table) within the last **21 days** is automatically excluded from the active watchlist candidates and fallback padding. (Simulated/dry-run trades are ignored).
+3. **Trend Filter (50-Day SMA Gate)**: Candidate (non-owned) stocks must be trading **above their 50-day Simple Moving Average (SMA)**, **UNLESS** they are deeply oversold with a 14-day RSI $< 25$. If they meet this oversold exception, they bypass the SMA gate and are promoted to the active watchlist (allowing high-quality value entry on deep pullbacks).
+4. **Momentum Scoring**: The remaining candidates that passed either the SMA trend filter or the RSI oversold bypass are scored and ranked based on a momentum ratio:
    $$\text{Momentum} = \frac{\text{Current Price}}{\text{50-day SMA}}$$
-4. **Watchlist Composition**: 
+5. **Watchlist Composition**: 
    - The watchlist is populated first by owned assets.
-   - The remaining slots (up to 10 total) are filled by candidate assets with the highest momentum scores (including oversold promotions).
-   - If the list contains fewer than 10 assets, it is padded using the static core asset watchlist.
+   - The remaining slots (up to 11 total) are filled by candidate assets with the highest momentum scores (including oversold promotions).
+   - If the list contains fewer than 11 assets, it is padded using the static core asset watchlist (excluding any recently sold assets under the cool-down filter).
 
 ---
 
 ## Phase 2: Market Data Ingestion & Indicator Formulation
-For each of the 10 assets on the active watchlist, the system gathers several technical, sentiment, and fundamental metrics:
+For each of the 11 assets on the active watchlist, the system gathers several technical, sentiment, and fundamental metrics:
 
 * **News Stream**: Ingests all news headlines and summaries published over the last 24 hours.
 * **Technical Trend Indicators**:
@@ -65,12 +66,12 @@ The 24-hour news stories for each watchlist ticker are analyzed by a specialized
 ---
 
 ## Phase 4: Baseline Ranking & Initial Signals
-The 10 watchlist assets are sorted in ascending order of their **daily raw sentiment scores** (either returned by the Sentiment Agent or decayed via the no-news bypass) and assigned a relative rank from 1 (lowest sentiment) to 10 (highest sentiment):
+The 11 watchlist assets are sorted in ascending order of their **daily raw sentiment scores** (either returned by the Sentiment Agent or decayed via the no-news bypass) and assigned a relative rank from 1 (lowest sentiment) to 11 (highest sentiment):
 
 * **Relative Rank 1 to 3 (Bottom 3)**:
   * Automatically receive a baseline signal of **`LIQUIDATE`**, **UNLESS** their historical 5-day EWMA sentiment is positive/neutral ($\ge +0.05$).
   * If the bottom-3 asset's EWMA sentiment is $\ge +0.05$, its baseline signal is overridden to **`HOLD`** to prevent spurious liquidations on low-news days or sector-wide bull markets.
-* **Relative Rank 4 to 10 (Top 7)**:
+* **Relative Rank 4 to 11 (Top 8)**:
   * Receive a **`STRONG BUY`** signal if their daily raw sentiment score is **greater than 0.2**.
   * Receive a **`HOLD`** signal if their daily raw sentiment score is **0.2 or less**.
 
