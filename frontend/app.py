@@ -111,7 +111,8 @@ def load_latest_snapshot() -> dict:
 def load_latest_recommendations() -> pd.DataFrame:
     """Loads the market metrics and signals from the absolute latest batch run within the last 24 hours."""
     query = f"""
-        SELECT ticker, raw_score, relative_rank, signal, current_price, moving_average_20d, analyst_consensus, thesis, timestamp, target_weight
+        SELECT ticker, raw_score, relative_rank, signal, current_price, moving_average_20d, analyst_consensus, thesis, timestamp, target_weight,
+               rsi, macd, macd_signal, drawdown_pct, sentiment_ewma, sentiment_volatility, forward_pe
         FROM `{project}.{dataset_id}.infrastructure_market_metrics`
         WHERE timestamp = (
             SELECT MAX(timestamp) 
@@ -683,6 +684,14 @@ with st.expander("📈 Daily AI Stock Recommendations", expanded=True):
                 visibility: visible;
                 opacity: 1;
             }
+            .tooltip .tooltip-align-left {
+                text-align: left !important;
+                width: 250px !important;
+                margin-left: -125px !important;
+                padding: 10px !important;
+                font-family: monospace;
+                white-space: pre-wrap !important;
+            }
             
             /* Inline Thesis Expander Styles */
             details.thesis-expander summary::-webkit-details-marker {
@@ -762,6 +771,29 @@ with st.expander("📈 Daily AI Stock Recommendations", expanded=True):
                 target_weight_str = f"{target_weight * 100:.1f}%" if pd.notnull(target_weight) else "0.0%"
                 weight_display = f"<span style='color: #64748b; font-weight: 500;'>{target_weight_str}</span>"
             
+            # Format technical indicators for the row's details tooltip
+            rsi = row.get("rsi")
+            rsi_str = f"{rsi:.1f}" if pd.notnull(rsi) else "N/A"
+            
+            macd = row.get("macd")
+            macd_sig = row.get("macd_signal")
+            macd_str = f"{macd:+.2f} / {macd_sig:+.2f}" if pd.notnull(macd) and pd.notnull(macd_sig) else "N/A"
+            
+            drawdown = row.get("drawdown_pct")
+            drawdown_str = f"{drawdown:.1f}%" if pd.notnull(drawdown) else "0.0%"
+            
+            ewma = row.get("sentiment_ewma")
+            ewma_str = f"{ewma:+.2f}" if pd.notnull(ewma) else "N/A"
+            
+            vol = row.get("sentiment_volatility")
+            vol_str = f"{vol:.2f}" if pd.notnull(vol) else "N/A"
+            
+            pe = row.get("forward_pe")
+            pe_str = f"{pe:.1f}" if pd.notnull(pe) else "N/A"
+            
+            sma = row.get("moving_average_20d")
+            sma_str = f"${sma:.2f}" if pd.notnull(sma) else "N/A"
+
             # Badge selection
             if sig == "STRONG BUY":
                 badge_class = "signal-buy"
@@ -773,7 +805,27 @@ with st.expander("📈 Daily AI Stock Recommendations", expanded=True):
             logo_img = get_logo_html(ticker)
             html_code += f"""
             <tr>
-                <td><div style='display: flex; align-items: center;'>{logo_img}<a class='ticker-link' href='https://finance.yahoo.com/quote/{ticker}' target='_blank'>{ticker}</a></div></td>
+                <td>
+                    <div style='display: flex; align-items: center; justify-content: space-between;'>
+                        <div style='display: flex; align-items: center;'>
+                            {logo_img}
+                            <a class='ticker-link' href='https://finance.yahoo.com/quote/{ticker}' target='_blank'>{ticker}</a>
+                        </div>
+                        <div class='tooltip' style='margin-left: 6px;'>
+                            <span style='font-size: 0.85rem; color: #2563eb; cursor: help;'>ⓘ</span>
+                            <span class='tooltiptext tooltip-align-left'>
+<strong style='color: #60a5fa;'>{ticker} Technical Metrics</strong>
+• Forward P/E: {pe_str}
+• 14-Day RSI: {rsi_str}
+• MACD/Signal: {macd_str}
+• Drawdown: {drawdown_str}
+• 5d Sentiment: {ewma_str} (EWMA)
+• Sent. Vol: {vol_str}
+• 20d SMA: {sma_str}
+                            </span>
+                        </div>
+                    </div>
+                </td>
                 <td>{score:+.2f}</td>
                 <td><span class='signal-badge {badge_class}'>{sig}</span></td>
                 <td>{price_str}</td>
