@@ -137,7 +137,8 @@ def fetch_ticker_market_data(ticker: str, current_time: float | None = None) -> 
         "drawdown_pct": None,
         "sustained_rsi_drop": False,
         "is_20d_high": False,
-        "macd_bullish_cross": False
+        "macd_bullish_cross": False,
+        "forward_pe": None
     }
 
     try:
@@ -181,6 +182,9 @@ def fetch_ticker_market_data(ticker: str, current_time: float | None = None) -> 
             target = info.get("targetMeanPrice")
             if target is not None:
                 data["target_price"] = float(target)
+            pe = info.get("forwardPE")
+            if pe is not None:
+                data["forward_pe"] = float(pe)
     except Exception:
         pass
 
@@ -535,6 +539,7 @@ async def run_sentiment_analysis_pipeline(dataset_id: str = "portfolio_analytics
         item["sustained_rsi_drop"] = ticker_data.get("sustained_rsi_drop")
         item["is_20d_high"] = ticker_data.get("is_20d_high")
         item["macd_bullish_cross"] = ticker_data.get("macd_bullish_cross")
+        item["forward_pe"] = ticker_data.get("forward_pe")
 
         # Get historical scores, append today's, and calculate 5-day EWMA & Volatility
         past_scores = historical_scores_map.get(ticker, [])
@@ -582,7 +587,8 @@ async def run_sentiment_analysis_pipeline(dataset_id: str = "portfolio_analytics
                 "sentiment_ewma": 0.0,
                 "sentiment_volatility": 0.0,
                 "is_20d_high": False,
-                "macd_bullish_cross": False
+                "macd_bullish_cross": False,
+                "forward_pe": None
             })
 
     # 6. Ingest and log SPY benchmark data
@@ -612,7 +618,8 @@ async def run_sentiment_analysis_pipeline(dataset_id: str = "portfolio_analytics
                 "sentiment_ewma": 0.0,
                 "sentiment_volatility": 0.0,
                 "is_20d_high": False,
-                "macd_bullish_cross": False
+                "macd_bullish_cross": False,
+                "forward_pe": None
             })
     except Exception as e:
         print(f"   {CLR_YELLOW}Warning: Failed to ingest SPY: {e}{CLR_RESET}")

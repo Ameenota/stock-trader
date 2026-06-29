@@ -149,7 +149,8 @@ Trading Rules to follow:
    - **Path A (Value/Dip Entry)**: Propose entries for assets experiencing a drawdown of 10% or more from their 52-week high while maintaining a positive 5-day EWMA sentiment score (> 0.1).
    - **Path B (Momentum Breakout)**: Propose entries where 'is_20d_high' is TRUE and 'macd_bullish_cross' is TRUE to participate in strong momentum breakout runs.
 3. Minimum Holding Period: Do NOT propose to sell, reduce weight of, or liquidate any stock in "Current Holdings" if its `days_held` is less than 21 days, UNLESS its EWMA sentiment score is extremely negative (below -0.5).
-4. Concentrated Portfolio: Never hold more than 3 active stock positions (excluding cash, but including TLT if selected). If we already hold positions that cannot be sold (due to the 21-day holding period rule), you cannot propose new allocations that would cause the total number of active positions to exceed 3. Under this scenario, keeping remaining capital in cash is preferred, even if it exceeds the 10% cash target.
+4. Fundamental Value: Consider the 'Forward P/E' when comparing assets. Favor infrastructure assets that offer a reasonable valuation floor relative to their sentiment momentum, avoiding heavily overextended valuations.
+5. Concentrated Portfolio: Never hold more than 3 active stock positions (excluding cash, but including TLT if selected). If we already hold positions that cannot be sold (due to the 21-day holding period rule), you cannot propose new allocations that would cause the total number of active positions to exceed 3. Under this scenario, keeping remaining capital in cash is preferred, even if it exceeds the 10% cash target.
 
 Your proposal must output a list of TargetAllocation objects under the `allocations` key. You must also output the final signals and theses for all watchlist assets under the `decisions` key.
 """
@@ -174,6 +175,7 @@ Our strict rules:
    - **For Path B (Momentum Breakout Entry)**: Approve entries regardless of drawdown (drawdown can be < 10% / near all-time highs) and bypass the 0.4 sentiment volatility gate (accepting volatility up to 0.85), provided that `is_20d_high` is TRUE and `macd_bullish_cross` is TRUE.
    Note: The defensive treasury bond option (TLT) is exempt from the 10% drawdown requirement.
 5. Minimum Holding Period: REJECT any proposal to sell, reduce weight of, or liquidate an existing holding if its days_held < 21, UNLESS the ticker's EWMA sentiment score is extremely negative (below -0.5).
+6. Valuation Ceiling: REJECT any new allocation to a stock (excluding treasury assets like TLT) where the Forward P/E is known and exceeds 80, to protect the portfolio against severe valuation compression during the 21-day holding period. If Forward P/E is missing or null, do not reject.
 
 Output format:
 You must output a structured review matching the AdvisorCritique schema. If you reject the proposal, you must provide explicit, mathematically sound feedback so the analyst can correct the weights in the next iteration.
@@ -328,6 +330,7 @@ async def financial_analysis_pipeline(
         "sentiment_ewma_5d": item.get("sentiment_ewma"),
         "sentiment_volatility_5d": item.get("sentiment_volatility"),
         "drawdown_pct": item.get("drawdown_pct"),
+        "forward_pe": item.get("forward_pe"),
         "sustained_rsi_drop": item.get("sustained_rsi_drop"),
         "rsi": item.get("rsi"),
         "macd": item.get("macd"),
@@ -478,7 +481,9 @@ async def financial_analysis_pipeline(
         }
         
         try:
-            filepath = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", dry_run_filename)
+            logs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "logs")
+            os.makedirs(logs_dir, exist_ok=True)
+            filepath = os.path.join(logs_dir, dry_run_filename)
             with open(filepath, "w") as f:
                 json.dump(dry_run_data, f, indent=2)
             print(f"   {CLR_GREEN}[DRY_RUN] Successfully dumped dry run results to {filepath}{CLR_RESET}")

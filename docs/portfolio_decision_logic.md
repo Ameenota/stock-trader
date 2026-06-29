@@ -46,6 +46,7 @@ For each of the 11 assets on the active watchlist, the system gathers several te
   * **52-Week Drawdown**: The percentage drop from the asset’s 52-week high:
     $$\text{Drawdown \%} = \frac{\text{52-week High} - \text{Current Price}}{\text{52-week High}} \times 100$$
   * **Analyst Recommendation**: The consensus recommendation key and the consensus target mean price.
+  * **Forward P/E**: Fetched from Yahoo Finance during ingestion to provide a fundamental valuation baseline.
 * **Historical Sentiment Aggregations**:
   * Queries the past 4 days of sentiment history and combines it with the current day's score to calculate:
     * **5-day EWMA Sentiment**: An Exponentially Weighted Moving Average of sentiment scores to capture the medium-term narrative trend.
@@ -95,6 +96,7 @@ The advisor reviews the draft proposal against path-dependent risk gates and iss
 * **Cash Buffer Guardrail**: Targets a 10% cash buffer. An adjustment is only forced if the actual cash balance drifts outside a **5% to 15%** tolerance band.
 * **Rebalancing Friction Guardrail**: A target allocation is 30%. The advisor will reject adjustments to an existing position if its current weight is within a **+/- 3% tolerance band** of the target.
 * **Minimum Holding Period Enforcement**: Rejects any proposal to exit or reduce positions held for less than 21 days, unless the EWMA sentiment score is below **-0.5**.
+* **Valuation Ceiling Gate**: Rejects any new allocation to a stock (excluding defensive Treasury ETFs like TLT) if its Forward P/E is known and exceeds **80**, protecting the portfolio against extreme valuation bubbles.
 * **Path-Dependent Entry Gating**:
   * **For Path A (Value/Dip Entry)**:
     * **Value Entry Gate**: The asset must be experiencing a **drawdown of 10% or more from its 52-week high**, and its 5-day EWMA sentiment must be bullish (**> 0.1**).

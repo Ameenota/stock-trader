@@ -81,6 +81,8 @@ def test_setup_bigquery(mock_bq_client):
     assert sentiment_table.schema[14].field_type == "FLOAT"
     assert sentiment_table.schema[19].name == "target_weight"
     assert sentiment_table.schema[19].field_type == "FLOAT"
+    assert sentiment_table.schema[22].name == "forward_pe"
+    assert sentiment_table.schema[22].field_type == "FLOAT"
 
     # Verify second table (trade_history)
     trade_table = mock_bq_client.create_table.call_args_list[1][0][0]
@@ -188,7 +190,8 @@ def test_insert_sentiment(mock_bq_client):
             "sentiment_volatility": None,
             "target_weight": 0.30,
             "is_20d_high": None,
-            "macd_bullish_cross": None
+            "macd_bullish_cross": None,
+            "forward_pe": None
         },
         {
             "ticker": "SMCI",
@@ -212,7 +215,8 @@ def test_insert_sentiment(mock_bq_client):
             "sentiment_volatility": None,
             "target_weight": None,
             "is_20d_high": None,
-            "macd_bullish_cross": None
+            "macd_bullish_cross": None,
+            "forward_pe": None
         }
     ]
 
