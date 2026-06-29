@@ -21,12 +21,15 @@ from app.tools.data_ingestion import run_sentiment_analysis_pipeline, ingest_mar
 
 
 @pytest.mark.asyncio
+@patch("app.tools.bigquery_service.get_recently_sold_tickers")
 @patch("app.tools.bigquery_service.get_latest_portfolio_holdings")
 @patch("app.tools.ticker_universe.yf.Ticker")
-async def test_determine_active_watchlist_sma_bypass_for_oversold(mock_ticker_class, mock_get_holdings):
+async def test_determine_active_watchlist_sma_bypass_for_oversold(mock_ticker_class, mock_get_holdings, mock_get_recently_sold):
     """Verify that candidate stocks below 50d SMA are promoted if they are deeply oversold (RSI < 25)."""
     # No owned holdings
     mock_get_holdings.return_value = []
+    # No recently sold
+    mock_get_recently_sold.return_value = []
 
     # Configure mock history based on the ticker symbol
     def mock_history_side_effect(ticker):

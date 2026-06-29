@@ -271,7 +271,8 @@ TICKER_DOMAINS = {
     "SNOW": "snowflake.com",
     "CRWD": "crowdstrike.com",
     "PANW": "paloaltonetworks.com",
-    "QCOM": "qualcomm.com"
+    "QCOM": "qualcomm.com",
+    "SNDK": "sandisk.com"
 }
 
 def get_logo_html(ticker: str) -> str:

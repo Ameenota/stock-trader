@@ -677,3 +677,32 @@ def get_recent_sentiment_scores(
     except Exception:
         return {}
 
+
+def get_recently_sold_tickers(
+    days: int = 21,
+    dataset_id: str = "portfolio_analytics"
+) -> List[str]:
+    """Queries BigQuery and returns the list of stock symbols sold (dry_run = FALSE) in the last N days."""
+    client = get_bigquery_client()
+    table_id = f"{client.project}.{dataset_id}.trade_history"
+
+    query = f"""
+        SELECT DISTINCT ticker
+        FROM `{table_id}`
+        WHERE action IN ('SELL', 'LIQUIDATE')
+          AND dry_run = FALSE
+          AND timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @days DAY)
+    """
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("days", "INT64", days)
+        ]
+    )
+    try:
+        query_job = client.query(query, job_config=job_config)
+        results = query_job.result()
+        return [row.ticker for row in results if row.ticker]
+    except Exception:
+        return []
+
+

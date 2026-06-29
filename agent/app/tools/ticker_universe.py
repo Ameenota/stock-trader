@@ -35,7 +35,7 @@ import yfinance as yf
 #      performing tickers to become the active watch list for today's run.
 # ==============================================================================
 
-# Centralized allowed universe of 40 AI sector and grid infrastructure stocks
+# Centralized allowed universe of 41 AI sector and grid infrastructure stocks
 TICKER_UNIVERSE = [
     # 1. Original 10 Core Assets (AI core/infrastructure + hedge ETF fallback)
     "NVDA", "AMD", "TSM", "MU", "SMCI", "DELL", "VRT", "ETN", "CEG", "TLT",
@@ -43,8 +43,8 @@ TICKER_UNIVERSE = [
     "MSFT", "GOOGL", "AMZN", "META", "ORCL",
     # 3. Custom ASICs, Networking & Design Tools
     "AVGO", "ANET", "ARM", "SNPS", "CDNS",
-    # 4. Semiconductor Manufacturing Equipment
-    "ASML", "AMAT", "LRCX", "KLAC", "INTC",
+    # 4. Semiconductor Manufacturing Equipment & Memory
+    "ASML", "AMAT", "LRCX", "KLAC", "INTC", "SNDK",
     # 5. Datacenter Utilities & Infrastructure
     "VST", "GE", "MRVL", "HPE",
     # 6. AI Software & Integration Services
@@ -57,7 +57,7 @@ TICKER_UNIVERSE = [
 
 # Currently active subset for daily ingestion and sentiment analysis to optimize token usage
 ACTIVE_TICKERS = [
-    "NVDA", "AMD", "TSM", "MU", "SMCI", "DELL", "VRT", "ETN", "CEG", "TLT"
+    "NVDA", "AMD", "TSM", "MU", "SMCI", "DELL", "VRT", "ETN", "CEG", "TLT", "SNDK"
 ]
 
 def get_allowed_tickers() -> List[str]:
@@ -70,15 +70,15 @@ def get_active_tickers() -> List[str]:
 
 
 async def determine_active_watchlist(dataset_id: str = "portfolio_analytics", return_details: bool = False) -> List[str] | tuple:
-    """Dynamically screens the 40-stock TICKER_UNIVERSE to build a refined 10-stock active watchlist.
+    """Dynamically screens the 41-stock TICKER_UNIVERSE to build a refined 11-stock active watchlist.
 
     Logic:
     1. Force-include any stock that we currently hold positions in (queried from BigQuery).
     2. Filter out non-owned stocks that are trading below their 50-day Simple Moving Average (SMA).
     3. Score the remaining stocks by momentum (current_price / 50-day SMA) and take the top performers.
-    4. Pad the watchlist with the original ACTIVE_TICKERS list if it contains fewer than 10 stocks.
+    4. Pad the watchlist with the original ACTIVE_TICKERS list if it contains fewer than 11 stocks.
     """
-    from app.tools.bigquery_service import get_latest_portfolio_holdings
+    from app.tools.bigquery_service import get_latest_portfolio_holdings, get_recently_sold_tickers
 
     # 1. Retrieve owned tickers from latest BQ portfolio snapshot
     try:
@@ -91,8 +91,15 @@ async def determine_active_watchlist(dataset_id: str = "portfolio_analytics", re
     # Filter owned tickers to make sure they are within our allowed universe
     owned_tickers = [t for t in owned_tickers if t in TICKER_UNIVERSE]
 
-    # 2. Determine candidate tickers (not currently owned)
-    candidates = [t for t in TICKER_UNIVERSE if t not in owned_tickers]
+    # 2. Retrieve recently sold tickers from BQ trade history to prevent immediate repurchase (cooling-down)
+    try:
+        recently_sold = get_recently_sold_tickers(days=21, dataset_id=dataset_id)
+        recently_sold = [t.strip().upper() for t in recently_sold if t]
+    except Exception:
+        recently_sold = []
+
+    # 3. Determine candidate tickers (not currently owned and not recently sold)
+    candidates = [t for t in TICKER_UNIVERSE if t not in owned_tickers and t not in recently_sold]
 
     # Helper function to fetch history and compute SMA in a thread pool
     async def fetch_sma_and_momentum(ticker: str):
@@ -152,13 +159,13 @@ async def determine_active_watchlist(dataset_id: str = "portfolio_analytics", re
     final_watchlist = []
 
     for t in owned_tickers + top_candidate_tickers:
-        if t not in watchlist_set and len(final_watchlist) < 10:
+        if t not in watchlist_set and len(final_watchlist) < 11:
             watchlist_set.add(t)
             final_watchlist.append(t)
 
-    # 7. Pad with the static core watch list (ACTIVE_TICKERS) if we have fewer than 10 stocks
+    # 7. Pad with the static core watch list (ACTIVE_TICKERS) if we have fewer than 11 stocks
     for t in ACTIVE_TICKERS:
-        if t not in watchlist_set and len(final_watchlist) < 10:
+        if t not in recently_sold and t not in watchlist_set and len(final_watchlist) < 11:
             watchlist_set.add(t)
             final_watchlist.append(t)
 
@@ -190,7 +197,9 @@ async def determine_active_watchlist(dataset_id: str = "portfolio_analytics", re
                     detail["reason"] = "Watchlist padding fallback"
             else:
                 detail["status"] = "FILTERED"
-                if t in owned_tickers:
+                if t in recently_sold:
+                    detail["reason"] = "Recently sold (21-day cool-down)"
+                elif t in owned_tickers:
                     detail["reason"] = "Owned but excluded"
                 elif t in results_lookup:
                     r = results_lookup[t]

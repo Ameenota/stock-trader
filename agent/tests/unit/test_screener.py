@@ -19,12 +19,15 @@ from app.tools.ticker_universe import determine_active_watchlist, TICKER_UNIVERS
 
 
 @pytest.mark.asyncio
+@patch("app.tools.bigquery_service.get_recently_sold_tickers")
 @patch("app.tools.bigquery_service.get_latest_portfolio_holdings")
 @patch("app.tools.ticker_universe.yf.Ticker")
-async def test_determine_active_watchlist_with_owned_holdings(mock_ticker_class, mock_get_holdings):
+async def test_determine_active_watchlist_with_owned_holdings(mock_ticker_class, mock_get_holdings, mock_get_recently_sold):
     """Verify that currently owned stocks are always forced into the active watchlist."""
     # Mock holdings: We own META and MSFT
     mock_get_holdings.return_value = ["META", "MSFT"]
+    # No recently sold
+    mock_get_recently_sold.return_value = []
 
     # Mock yfinance for the rest of the tickers
     mock_ticker_instance = MagicMock()
@@ -40,22 +43,25 @@ async def test_determine_active_watchlist_with_owned_holdings(mock_ticker_class,
     # Verify owned tickers are forced into the watchlist first
     assert "META" in watchlist
     assert "MSFT" in watchlist
-    assert len(watchlist) == 10
+    assert len(watchlist) == 11
     
     # Assert all items are unique
-    assert len(set(watchlist)) == 10
+    assert len(set(watchlist)) == 11
     # Assert they are all within the TICKER_UNIVERSE
     for ticker in watchlist:
         assert ticker in TICKER_UNIVERSE
 
 
 @pytest.mark.asyncio
+@patch("app.tools.bigquery_service.get_recently_sold_tickers")
 @patch("app.tools.bigquery_service.get_latest_portfolio_holdings")
 @patch("app.tools.ticker_universe.yf.Ticker")
-async def test_determine_active_watchlist_filters_sma_and_sorts_momentum(mock_ticker_class, mock_get_holdings):
+async def test_determine_active_watchlist_filters_sma_and_sorts_momentum(mock_ticker_class, mock_get_holdings, mock_get_recently_sold):
     """Verify that candidates below 50d SMA are filtered, and valid candidates are ranked by momentum."""
     # No owned holdings
     mock_get_holdings.return_value = []
+    # No recently sold
+    mock_get_recently_sold.return_value = []
 
     # We will configure mock history based on the ticker symbol
     def mock_history_side_effect(ticker):
@@ -94,5 +100,37 @@ async def test_determine_active_watchlist_filters_sma_and_sorts_momentum(mock_ti
     assert watchlist[0] == "PLTR"
     assert watchlist[1] == "GOOGL"
 
-    # Watchlist must still be padded to exactly 10 tickers
-    assert len(watchlist) == 10
+    # Watchlist must still be padded to exactly 11 tickers
+    assert len(watchlist) == 11
+
+
+@pytest.mark.asyncio
+@patch("app.tools.bigquery_service.get_recently_sold_tickers")
+@patch("app.tools.bigquery_service.get_latest_portfolio_holdings")
+@patch("app.tools.ticker_universe.yf.Ticker")
+async def test_determine_active_watchlist_filters_recently_sold(mock_ticker_class, mock_get_holdings, mock_get_recently_sold):
+    """Verify that recently sold stocks are excluded from the watchlist candidates and padding."""
+    # No owned holdings
+    mock_get_holdings.return_value = []
+    # Recently sold: "NVDA" and "AMD"
+    mock_get_recently_sold.return_value = ["NVDA", "AMD"]
+
+    # Configure mock history: rising trend (current price > sma_50)
+    mock_ticker_instance = MagicMock()
+    mock_ticker_instance.history.return_value = pd.DataFrame({
+        "Close": [float(i) for i in range(60)]
+    })
+    mock_ticker_class.return_value = mock_ticker_instance
+
+    watchlist, details = await determine_active_watchlist(dataset_id="test_dataset", return_details=True)
+
+    # NVDA and AMD should NOT be in the watchlist because they were recently sold
+    assert "NVDA" not in watchlist
+    assert "AMD" not in watchlist
+    assert len(watchlist) == 11
+    
+    # Assert they are filtered in details with correct reason
+    assert details["NVDA"]["status"] == "FILTERED"
+    assert details["NVDA"]["reason"] == "Recently sold (21-day cool-down)"
+    assert details["AMD"]["status"] == "FILTERED"
+    assert details["AMD"]["reason"] == "Recently sold (21-day cool-down)"
