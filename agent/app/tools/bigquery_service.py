@@ -615,7 +615,7 @@ def get_last_buy_timestamp(
     query = f"""
         SELECT timestamp
         FROM `{table_id}`
-        WHERE ticker = @ticker AND action = 'BUY' AND dry_run = @dry_run
+        WHERE ticker = @ticker AND action IN ('BUY', 'STRONG BUY') AND dry_run = @dry_run
         ORDER BY timestamp DESC
         LIMIT 1
     """
