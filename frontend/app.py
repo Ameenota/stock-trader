@@ -15,7 +15,7 @@ st.set_page_config(
     page_title="Autonomous Stock Trader Dashboard",
     page_icon="📈",
     layout="wide",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="auto"
 )
 
 # 2. Modern Custom Styling
@@ -323,8 +323,11 @@ headlines = load_latest_news_headlines()
 if snap.get("summary"):
     st.markdown(f"""
     <div style="background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border-left: 5px solid #22c55e; padding: 1.1rem 1.4rem; border-radius: 8px; margin-top: -0.5rem; margin-bottom: 2rem; box-shadow: 0 4px 12px rgba(34, 197, 94, 0.08);">
-        <div style="font-weight: 700; color: #166534; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.3rem; display: flex; align-items: center; gap: 6px;">
-            <span>🤖</span> Latest Agent Recommendations
+        <div style="font-weight: 700; color: #166534; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.3rem; display: flex; align-items: center; justify-content: space-between; gap: 6px;">
+            <div style="display: flex; align-items: center; gap: 6px;">
+                <span>🤖</span> Latest Agent Recommendations
+            </div>
+            <a href="/Decision_Logic" target="_self" style="color: #166534; text-decoration: underline; font-weight: 600; font-size: 0.8rem; text-transform: none; letter-spacing: normal;">following rules documented here...</a>
         </div>
         <div style="color: #14532d; font-size: 0.95rem; line-height: 1.5; font-weight: 500;">
             {snap['summary']}
