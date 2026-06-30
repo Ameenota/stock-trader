@@ -112,6 +112,7 @@ def setup_bigquery(dataset_id: str = "portfolio_analytics") -> None:
         bigquery.SchemaField("unrealized_gain_loss_percent", "FLOAT", mode="REQUIRED"),
         bigquery.SchemaField("holdings", "STRING", mode="REQUIRED"),
         bigquery.SchemaField("buying_power", "FLOAT", mode="NULLABLE"),
+        bigquery.SchemaField("summary", "STRING", mode="NULLABLE"),
     ]
     snapshot_table = bigquery.Table(snapshot_table_id, schema=snapshot_schema)
     try:
@@ -390,7 +391,8 @@ def insert_portfolio_snapshot(
         "unrealized_gain_loss": float(snapshot["unrealized_gain_loss"]),
         "unrealized_gain_loss_percent": float(snapshot["unrealized_gain_loss_percent"]),
         "holdings": snapshot["holdings"],  # JSON-formatted string
-        "buying_power": float(snapshot["buying_power"]) if snapshot.get("buying_power") is not None else None
+        "buying_power": float(snapshot["buying_power"]) if snapshot.get("buying_power") is not None else None,
+        "summary": _sanitize_string(snapshot.get("summary"))
     }
 
     try:
@@ -489,7 +491,11 @@ def get_latest_market_metrics(
     query = f"""
         SELECT ticker, raw_score, thesis, relative_rank, signal, timestamp, analyst_consensus, target_price, current_price, moving_average_20d, price_to_ma_ratio, rsi, macd, macd_signal, drawdown_pct, sustained_rsi_drop, sentiment_ewma, sentiment_volatility, target_weight, is_20d_high, macd_bullish_cross, forward_pe
         FROM `{table_id}`
-        WHERE DATE(timestamp) = @target_date
+        WHERE timestamp = (
+            SELECT MAX(timestamp) 
+            FROM `{table_id}` 
+            WHERE DATE(timestamp) = @target_date
+        )
         ORDER BY relative_rank DESC
     """
     
@@ -503,9 +509,14 @@ def get_latest_market_metrics(
     results = query_job.result()
     
     metrics = []
+    seen_tickers = set()
     for row in results:
+        ticker = row.ticker
+        if ticker in seen_tickers:
+            continue
+        seen_tickers.add(ticker)
         metrics.append({
-            "ticker": row.ticker,
+            "ticker": ticker,
             "raw_score": row.raw_score,
             "thesis": row.thesis,
             "relative_rank": row.relative_rank,

@@ -35,7 +35,7 @@ import yfinance as yf
 #      performing tickers to become the active watch list for today's run.
 # ==============================================================================
 
-# Centralized allowed universe of 42 AI sector and grid infrastructure stocks (including Kraken Robotics)
+# Centralized allowed universe of 42 AI sector and grid infrastructure stocks (including Rocket Lab)
 TICKER_UNIVERSE = [
     # 1. Original 10 Core Assets (AI core/infrastructure + hedge ETF fallback)
     "NVDA", "AMD", "TSM", "MU", "SMCI", "DELL", "VRT", "ETN", "CEG", "TLT",
@@ -53,13 +53,13 @@ TICKER_UNIVERSE = [
     "NET", "DDOG", "SNOW",
     # 8. AI-driven Security & Edge Devices
     "CRWD", "PANW", "QCOM",
-    # 9. Marine Robotics & Autonomy
-    "KRKNF"
+    # 9. Space Infrastructure & Aerospace
+    "RKLB"
 ]
 
 # Currently active subset for daily ingestion and sentiment analysis to optimize token usage
 ACTIVE_TICKERS = [
-    "NVDA", "AMD", "TSM", "MU", "SMCI", "DELL", "VRT", "ETN", "CEG", "TLT", "SNDK", "KRKNF"
+    "NVDA", "AMD", "TSM", "MU", "SMCI", "DELL", "VRT", "ETN", "CEG", "TLT", "SNDK", "RKLB"
 ]
 
 def get_allowed_tickers() -> List[str]:

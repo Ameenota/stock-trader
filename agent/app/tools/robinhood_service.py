@@ -151,7 +151,7 @@ async def fetch_robinhood_portfolio_state(account_number: str) -> Tuple[float, f
     return total_cash, buying_power, holdings
 
 
-async def log_portfolio_snapshot(dataset_id: str = "portfolio_analytics") -> None:
+async def log_portfolio_snapshot(summary: str | None = None, dataset_id: str = "portfolio_analytics") -> None:
     """Queries Robinhood portfolio cash and positions, and logs a snapshot to BigQuery."""
     import json
     from app.tools.bigquery_service import insert_portfolio_snapshot
@@ -180,7 +180,8 @@ async def log_portfolio_snapshot(dataset_id: str = "portfolio_analytics") -> Non
         "buying_power": buying_power,
         "unrealized_gain_loss": unrealized_gain_loss,
         "unrealized_gain_loss_percent": unrealized_gain_loss_percent,
-        "holdings": json.dumps(holdings)
+        "holdings": json.dumps(holdings),
+        "summary": summary
     }
 
     insert_portfolio_snapshot(snapshot, dataset_id=dataset_id)

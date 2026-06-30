@@ -71,7 +71,7 @@ dataset_id = "portfolio_analytics"
 def load_latest_snapshot() -> dict:
     """Loads the most recent portfolio snapshot from BigQuery."""
     query = f"""
-        SELECT timestamp, account_number, total_equity, total_cash, buying_power, unrealized_gain_loss, unrealized_gain_loss_percent, holdings
+        SELECT timestamp, account_number, total_equity, total_cash, buying_power, unrealized_gain_loss, unrealized_gain_loss_percent, holdings, summary
         FROM `{project}.{dataset_id}.portfolio_snapshot`
         ORDER BY timestamp DESC
         LIMIT 1
@@ -82,6 +82,7 @@ def load_latest_snapshot() -> dict:
         if results:
             row = results[0]
             bp = getattr(row, "buying_power", None)
+            summary_val = getattr(row, "summary", None)
             return {
                 "timestamp": row.timestamp,
                 "account_number": row.account_number,
@@ -90,7 +91,8 @@ def load_latest_snapshot() -> dict:
                 "buying_power": bp if bp is not None else row.total_cash,
                 "unrealized_gain_loss": row.unrealized_gain_loss,
                 "unrealized_gain_loss_percent": row.unrealized_gain_loss_percent,
-                "holdings": json.loads(row.holdings) if row.holdings else []
+                "holdings": json.loads(row.holdings) if row.holdings else [],
+                "summary": summary_val
             }
     except Exception as e:
         st.error(f"Error loading snapshot: {e}")
@@ -316,6 +318,19 @@ recs_df = load_latest_recommendations()
 graveyard_df = load_latest_graveyard()
 trades_df = load_trade_history()
 headlines = load_latest_news_headlines()
+
+# Render decision summary callout Above The Fold (ATF) if present
+if snap.get("summary"):
+    st.markdown(f"""
+    <div style="background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border-left: 5px solid #22c55e; padding: 1.1rem 1.4rem; border-radius: 8px; margin-top: -0.5rem; margin-bottom: 2rem; box-shadow: 0 4px 12px rgba(34, 197, 94, 0.08);">
+        <div style="font-weight: 700; color: #166534; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.3rem; display: flex; align-items: center; gap: 6px;">
+            <span>🤖</span> Latest Agent Decision & Thesis
+        </div>
+        <div style="color: #14532d; font-size: 1.05rem; line-height: 1.5; font-weight: 500;">
+            {snap['summary']}
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
 # Calculate average sentiment and render columns
 if not recs_df.empty:
