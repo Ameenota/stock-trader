@@ -28,7 +28,7 @@ graph TD
     BQ1 -->|Weekly Historical Metrics| PA
     LiveBroker[Live Cash & Holdings from Robinhood] -->|Starts state inputs| PA
     
-    EC -->|Final Approved target weights %| Exec[Deterministic Python Execution Controller]
+    EC -->|Final Approved target weights %| Exec[Deterministic Python Broker Executor]
     Exec -->|1. Calculates Deltas & enforces tolerance ranges| Guardrail[Double Guardrails & Dry-run Interceptor]
     Guardrail -->|2. Places sequentially sells then buys| MCP[Robinhood MCP Server]
     
@@ -59,7 +59,7 @@ graph TD
   - `portfolio_analyst`: Evaluates technical scores and conviction, proposing a target portfolio allocation (in percentages).
   - `senior_risk_advisor`: Reviews proposals as a critic, ensuring budget limits and technical entry thresholds are respected.
   - `escalation_checker`: Custom python agent that breaks the debate loop once a proposal is approved.
-  - **Decoupled Execution**: Execution logic is fully separated into a deterministic Python controller (`ExecutionController`), keeping brokerage calls completely isolated from LLM agents.
+  - **Decoupled Execution**: Execution logic is fully separated into a deterministic Python executor (`BrokerExecutor`), keeping brokerage calls completely isolated from LLM agents.
 * **Model Context Protocol (MCP)**: The deterministic execution layer uses an active Robinhood MCP server to run queries (`get_portfolio`, `get_equity_positions`) and order tools (`place_equity_order`).
 * **Double Account Guardrails & Interceptor Callback**:
   - *Prompt Protection*: Instructs the agent to only target the account ending in `48661`.
@@ -114,7 +114,7 @@ The target state is debated and finalized by a multi-agent critique loop:
    * **For Path B**: Bypasses the drawdown gate (allowing entry near all-time highs) and the 0.4 sentiment volatility gate (raising it to 0.85), provided breakout indicators are active.
    * **Minimum Holding Period**: Cannot exit positions held for $< 21$ days unless sentiment EWMA falls below $-0.5$.
 3. **Escalation Checker**: Custom `BaseAgent` that terminates the LoopAgent when the proposal receives approval from the Advisor.
-4. **Execution Controller**: Evaluates target weights vs current holdings and schedules trades sequentially (sells first, then buys) via the Robinhood MCP server.
+4. **Broker Executor**: Evaluates target weights vs current holdings and schedules trades sequentially (sells first, then buys) via the Robinhood MCP server.
 
 ---
 

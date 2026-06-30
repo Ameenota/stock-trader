@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from google.adk.events import Event, EventActions
 from google.adk.agents.invocation_context import InvocationContext
 from app.agent import EscalationChecker, TargetAllocation, AdvisorCritique
-from app.execution import ExecutionController
+from app.broker_executor import BrokerExecutor
 
 @pytest.mark.asyncio
 async def test_escalation_checker_approved():
@@ -61,7 +61,7 @@ async def test_escalation_checker_rejected():
 
 @pytest.mark.asyncio
 async def test_execution_controller_rebalance_calculations():
-    """Verify that ExecutionController calculates deltas correctly and honors position/cash tolerance bounds."""
+    """Verify that BrokerExecutor calculates deltas correctly and honors position/cash tolerance bounds."""
     # 1. Mock the Robinhood tools
     mock_get_portfolio = AsyncMock()
     mock_get_portfolio.run_async.return_value = {
@@ -131,14 +131,14 @@ async def test_execution_controller_rebalance_calculations():
         {"ticker": "DELL", "weight_pct": 0.30},
     ]
 
-    controller = ExecutionController(
+    controller = BrokerExecutor(
         toolset=mock_toolset,
         account_number="MOCK_ACCOUNT_48661",
         dataset_id="test_dataset"
     )
 
     # 3. Patch insert_trade_record to avoid BQ logging during tests
-    with patch("app.execution.insert_trade_record") as mock_log_trade:
+    with patch("app.broker_executor.insert_trade_record") as mock_log_trade:
         # Enforce dry-run mode to bypass real calls
         os.environ["SKIP_LIVE_TRADES"] = "true"
         await controller.execute_rebalance(approved_allocations)

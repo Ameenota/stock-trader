@@ -112,7 +112,7 @@ If the Advisor rejects the proposal, it provides mathematical feedback, and the 
 ---
 
 ## Phase 6: Order Sizing & Execution Guards
-Once allocations are approved, the execution controller determines trade sizes and applies safety filters:
+Once allocations are approved, the broker executor determines trade sizes and applies safety filters:
 
 1. **Trade Delta Calculation**: Computes the difference between target weights and current holding weights:
    $$\text{Delta USD} = (\text{Target \%} - \text{Current \%}) \times \text{Total Portfolio Equity}$$

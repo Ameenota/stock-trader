@@ -29,7 +29,7 @@ CLR_BLUE = "\033[94m"
 CLR_MAGENTA = "\033[95m"
 CLR_CYAN = "\033[96m"
 
-class ExecutionController:
+class BrokerExecutor:
     def __init__(self, toolset, account_number: str, dataset_id: str = "portfolio_analytics"):
         self.toolset = toolset
         self.account_number = account_number
@@ -38,7 +38,7 @@ class ExecutionController:
     async def execute_rebalance(self, approved_allocations: list) -> None:
         """Calculates trade deltas based on approved allocations and total equity,
         respects tolerance bands, executes sells first then buys, and logs to BigQuery."""
-        print(f"\n{CLR_BOLD}{CLR_GREEN}=== Execution Controller: Starting Portfolio Rebalancing ==={CLR_RESET}")
+        print(f"\n{CLR_BOLD}{CLR_GREEN}=== Broker Executor: Starting Portfolio Rebalancing ==={CLR_RESET}")
         
         # Filter out CASH and USD pseudo-allocations
         approved_allocations = [
@@ -303,3 +303,9 @@ class ExecutionController:
 
         print(f"\n{CLR_GREEN}All trade executions completed.{CLR_RESET}")
         print(f"{CLR_BOLD}{CLR_GREEN}========================================================={CLR_RESET}\n")
+
+        return {
+            "sells": sells,
+            "buys": buys if should_execute_buys else [],
+            "buy_power_skip": not should_execute_buys and bool(buys)
+        }

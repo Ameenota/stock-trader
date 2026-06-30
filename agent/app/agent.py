@@ -261,9 +261,9 @@ async def financial_analysis_pipeline(
     dataset_id: str = "portfolio_analytics"
 ) -> list:
     """Runs a multi-agent critique debate loop to finalize stock allocations,
-    then executes trades using ExecutionController and logs snapshot/trades to BigQuery."""
+    then executes trades using BrokerExecutor and logs snapshot/trades to BigQuery."""
     from app.tools.bigquery_service import get_historical_metrics
-    from app.execution import ExecutionController
+    from app.broker_executor import BrokerExecutor
     from app.tools.robinhood_service import fetch_robinhood_portfolio_state
 
     # 1. Fetch weekly historical signals log
@@ -515,11 +515,11 @@ async def financial_analysis_pipeline(
             item["thesis"] = decision_map[ticker]["thesis"]
         item["target_weight"] = allocation_map.get(ticker, 0.0)
 
-    # 4. Instantiate ExecutionController and run broker execution
+    # 4. Instantiate BrokerExecutor and run broker execution
     print(f"\n{CLR_BOLD}{CLR_GREEN}💸 [PHASE: 5. Execution & Portfolio Rebalancing]{CLR_RESET}")
     print(f"   Connecting to Robinhood MCP tools for target account ending in 48661...")
-    controller = ExecutionController(toolset=robinhood_toolset, account_number=account_number, dataset_id=dataset_id)
-    await controller.execute_rebalance(approved_allocations=approved_allocations)
+    controller = BrokerExecutor(toolset=robinhood_toolset, account_number=account_number, dataset_id=dataset_id)
+    execution_result = await controller.execute_rebalance(approved_allocations=approved_allocations)
     print(f"{CLR_BOLD}{CLR_GREEN}💸 [PHASE: 5. Exit]{CLR_RESET}")
 
     # 5. Log post-trade portfolio snapshot to BigQuery
@@ -554,6 +554,24 @@ async def financial_analysis_pipeline(
         print(f"   {CLR_GREEN}Unified market metrics and execution logs written to BigQuery successfully.{CLR_RESET}")
     except Exception as e:
         print(f"   {CLR_YELLOW}Warning: Failed to write unified metrics to BigQuery: {e}{CLR_RESET}")
+
+    # 7. Notify Discord
+    try:
+        from app.app_utils.discord_notifier import send_discord_webhook
+        summary_str = None
+        if proposal:
+            if isinstance(proposal, dict):
+                summary_str = proposal.get("summary")
+            else:
+                summary_str = getattr(proposal, "summary", None)
+        send_discord_webhook(
+            summary=summary_str or "Daily portfolio optimization complete.",
+            approved_allocations=approved_allocations,
+            decisions=decisions,
+            is_dry_run=is_dry_run
+        )
+    except Exception as e:
+        print(f"   {CLR_YELLOW}Warning: Failed to send Discord notification: {e}{CLR_RESET}")
 
     return ranked_portfolio
 

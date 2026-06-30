@@ -16,7 +16,7 @@ import os
 import pytest
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
-from app.execution import ExecutionController
+from app.broker_executor import BrokerExecutor
 from app.tools.bigquery_service import get_last_buy_timestamp, insert_portfolio_snapshot
 
 # ==============================================================================
@@ -96,11 +96,11 @@ def test_insert_portfolio_snapshot(mock_get_client):
 
 
 # ==============================================================================
-# 2. Tests for ExecutionController (Live Execution & Overdraft Guardrail)
+# 2. Tests for BrokerExecutor (Live Execution & Overdraft Guardrail)
 # ==============================================================================
 
 @pytest.mark.asyncio
-@patch("app.execution.insert_trade_record")
+@patch("app.broker_executor.insert_trade_record")
 async def test_execution_controller_live_trading_mode(mock_log_trade):
     """Verify that place_equity_order is called and logs dry_run=False when SKIP_LIVE_TRADES=false."""
     # 1. Setup mock Robinhood tools
@@ -138,7 +138,7 @@ async def test_execution_controller_live_trading_mode(mock_log_trade):
     mock_toolset.get_tools = AsyncMock(return_value=mock_tools)
 
     # 2. Setup controller and run under SKIP_LIVE_TRADES=false
-    controller = ExecutionController(
+    controller = BrokerExecutor(
         toolset=mock_toolset,
         account_number="MOCK_ACCOUNT_48661",
         dataset_id="test_dataset"
@@ -165,7 +165,7 @@ async def test_execution_controller_live_trading_mode(mock_log_trade):
 
 
 @pytest.mark.asyncio
-@patch("app.execution.insert_trade_record")
+@patch("app.broker_executor.insert_trade_record")
 async def test_execution_controller_overdraft_guardrail(mock_log_trade):
     """Verify that buy orders are skipped if required buy amount exceeds max spendable buying power."""
     # 1. Setup mock Robinhood tools with low cash ($10 cash, $100 total equity)
@@ -204,7 +204,7 @@ async def test_execution_controller_overdraft_guardrail(mock_log_trade):
     mock_toolset = MagicMock()
     mock_toolset.get_tools = AsyncMock(return_value=mock_tools)
 
-    controller = ExecutionController(
+    controller = BrokerExecutor(
         toolset=mock_toolset,
         account_number="MOCK_ACCOUNT_48661",
         dataset_id="test_dataset"
