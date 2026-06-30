@@ -324,9 +324,9 @@ if snap.get("summary"):
     st.markdown(f"""
     <div style="background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border-left: 5px solid #22c55e; padding: 1.1rem 1.4rem; border-radius: 8px; margin-top: -0.5rem; margin-bottom: 2rem; box-shadow: 0 4px 12px rgba(34, 197, 94, 0.08);">
         <div style="font-weight: 700; color: #166534; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.3rem; display: flex; align-items: center; gap: 6px;">
-            <span>🤖</span> Latest Agent Decision & Thesis
+            <span>🤖</span> Latest Agent Recommendations
         </div>
-        <div style="color: #14532d; font-size: 1.05rem; line-height: 1.5; font-weight: 500;">
+        <div style="color: #14532d; font-size: 0.95rem; line-height: 1.5; font-weight: 500;">
             {snap['summary']}
         </div>
     </div>
