@@ -77,17 +77,15 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("Portfolio Decision Logic")
-st.markdown("<p class='subtitle'>A concise reference for the 6-phase quantitative and qualitative engine determining our daily allocations.</p>", unsafe_allow_html=True)
+st.markdown("<p class='subtitle'>A concise reference for the 5-phase quantitative and qualitative engine determining our daily allocations.</p>", unsafe_allow_html=True)
 
 # Phase 1
 st.markdown("""
 <div class="phase-card">
     <div class="phase-title"><span>🔍</span> Phase 1: Watchlist Screening (Pre-Filtering & Momentum)</div>
     <ul class="gate-list">
-        <li class="gate-item"><span class="gate-name">Owned Position Promotion:</span> Any stock currently held in the portfolio is automatically force-included in the active watchlist.</li>
-        <li class="gate-item"><span class="gate-name">Cool-down Filter:</span> Live assets sold within the last 21 days are excluded from the watchlist to prevent rapid buy-sell-buy chop.</li>
-        <li class="gate-item"><span class="gate-name">Trend & RSI Bypass:</span> Stocks must trade above their 50-day SMA, unless deeply oversold with a 14-day RSI < 25 (deep pullback value entries).</li>
-        <li class="gate-item"><span class="gate-name">Momentum Scoring:</span> Eligible stocks are ranked by trend momentum (Current Price / 50-day SMA) to fill the 11-stock active watchlist.</li>
+        <li class="gate-item">We download stock data from <strong>yfinance</strong> and use the following indicators (<strong>Owned Position status, 21-day cool-down, 50-day SMA, and 14-day RSI</strong>) to create our initial filter of stocks to pass to the next gate.</li>
+        <li class="gate-item"><strong>Example:</strong> If a non-owned stock is trading below its 50-day SMA and has an RSI of 30, it is not picked; if it is trading above its 50-day SMA (or has a deeply oversold RSI < 25), it passes.</li>
     </ul>
 </div>
 """, unsafe_allow_html=True)
@@ -95,10 +93,9 @@ st.markdown("""
 # Phase 2
 st.markdown("""
 <div class="phase-card">
-    <div class="phase-title"><span>📊</span> Phase 2: Market Ingestion & Indicator Formulation</div>
+    <div class="phase-title"><span>📊</span> Phase 2: Technical Formulation</div>
     <ul class="gate-list">
-        <li class="gate-item"><span class="gate-name">Technical Indicators:</span> Formulates key short-term metrics including 20-day SMA, RSI (14-period), 52-week drawdown, and MACD bullish crossovers.</li>
-        <li class="gate-item"><span class="gate-name">Historical Sentiment tracking:</span> Computes 5-day EWMA (medium-term narrative trend) and 5-day sentiment volatility (standard deviation).</li>
+        <li class="gate-item">We calculate additional technical indicators (such as 20-day SMA, 52-week drawdown, and MACD) for the shortlisted stocks. <strong>No filtering is performed at this phase.</strong></li>
     </ul>
 </div>
 """, unsafe_allow_html=True)
@@ -106,11 +103,12 @@ st.markdown("""
 # Phase 3
 st.markdown("""
 <div class="phase-card">
-    <div class="phase-title"><span>✍️</span> Phase 3: Sentiment Score Generation</div>
+    <div class="phase-title"><span>✍️</span> Phase 3: Sentiment Scoring & Baseline Ranking</div>
     <ul class="gate-list">
-        <li class="gate-item"><span class="gate-name">Gemini Analyst Scoring:</span> Gemini-Flash scans 24h news to score conviction from -1.0 (extremely negative) to +1.0 (extremely positive).</li>
-        <li class="gate-item"><span class="gate-name">No-News Decay (Weekdays):</span> If a ticker lacks recent news, prior EWMA sentiment is mathematically decayed by 30% to prevent stale signals.</li>
-        <li class="gate-item"><span class="gate-name">Weekend Pause:</span> On weekends, news scraping and decay rules are paused, carrying Friday's EWMA sentiment forward unchanged.</li>
+        <li class="gate-item"><span class="gate-name">Gemini Analyst Scoring:</span> Gemini-Flash scans 24h news to score conviction from -1.0 (extremely negative) to +1.0 (extremely positive). Tickers with no news on weekdays are decayed by 30%.</li>
+        <li class="gate-item"><span class="gate-name">EWMA & Volatility Formulation:</span> Combines today's score with the past 4 days of history to calculate the 5-day EWMA and 5-day sentiment volatility.</li>
+        <li class="gate-item"><span class="gate-name">Baseline Signals:</span> Ranks the 11 assets by raw sentiment. The bottom 3 are marked as LIQUIDATE (unless EWMA >= +0.05, which overrides to HOLD), and the top 8 are marked as STRONG BUY (if raw score > 0.2) or HOLD.</li>
+        <li class="gate-item"><span class="gate-name">Weekend Pause:</span> News scraping and decay rules are paused on weekends, carrying Friday's EWMA sentiment forward.</li>
     </ul>
 </div>
 """, unsafe_allow_html=True)
@@ -118,10 +116,12 @@ st.markdown("""
 # Phase 4
 st.markdown("""
 <div class="phase-card">
-    <div class="phase-title"><span>⚖️</span> Phase 4: Baseline Ranking & Initial Signals</div>
+    <div class="phase-title"><span>🧠</span> Phase 4: Multi-Agent Portfolio Debate (The Critic Loop)</div>
     <ul class="gate-list">
-        <li class="gate-item"><span class="gate-name">Bottom-3 Conviction:</span> Rank 1 to 3 assets receive a LIQUIDATE signal, overridden to HOLD if 5-day EWMA sentiment is positive (>= +0.05).</li>
-        <li class="gate-item"><span class="gate-name">Top-8 Conviction:</span> Rank 4 to 11 assets receive a STRONG BUY signal if raw sentiment is > 0.2, otherwise they receive a HOLD signal.</li>
+        <li class="gate-item"><span class="gate-name">Portfolio Sizing Rules:</span> Target maximum of 3 active equity holdings at 30% weight each, leaving a 10% cash buffer.</li>
+        <li class="gate-item"><span class="gate-name">Path A (Value/Dip Entry):</span> Requires drawdown >= 10% from 52-week high, bullish EWMA sentiment > 0.1, and low sentiment volatility (<= 0.4).</li>
+        <li class="gate-item"><span class="gate-name">Path B (Momentum Breakout):</span> Bypasses drawdown and volatility checks for stocks hitting 20-day highs with MACD bullish crosses.</li>
+        <li class="gate-item"><span class="gate-name">Core Guardrails:</span> Enforces a minimum 21-day holding period (unless EWMA < -0.5) and rejects buys if Forward P/E exceeds 80. We fall back to treasury bonds when the market is bearish.</li>
     </ul>
 </div>
 """, unsafe_allow_html=True)
@@ -129,20 +129,7 @@ st.markdown("""
 # Phase 5
 st.markdown("""
 <div class="phase-card">
-    <div class="phase-title"><span>🧠</span> Phase 5: Multi-Agent Portfolio Debate (The Critic Loop)</div>
-    <ul class="gate-list">
-        <li class="gate-item"><span class="gate-name">Portfolio Sizing Rules:</span> Target maximum of 3 active equity holdings at 30% weight each, leaving a 10% cash buffer, fallback to TLT if defensive.</li>
-        <li class="gate-item"><span class="gate-name">Path A (Value/Dip Entry):</span> Requires drawdown >= 10% from 52-week high, bullish EWMA sentiment > 0.1, and low sentiment volatility (<= 0.4).</li>
-        <li class="gate-item"><span class="gate-name">Path B (Momentum Breakout):</span> Bypasses drawdown and volatility checks for stocks hitting 20-day highs with MACD bullish crosses.</li>
-        <li class="gate-item"><span class="gate-name">Core Guardrails:</span> Enforces a minimum 21-day holding period (unless EWMA < -0.5) and rejects non-Treasury buys if Forward P/E exceeds 80.</li>
-    </ul>
-</div>
-""", unsafe_allow_html=True)
-
-# Phase 6
-st.markdown("""
-<div class="phase-card">
-    <div class="phase-title"><span>⚡</span> Phase 6: Order Sizing & Execution Guards</div>
+    <div class="phase-title"><span>⚡</span> Phase 5: Order Sizing & Execution Guards</div>
     <ul class="gate-list">
         <li class="gate-item"><span class="gate-name">Tolerance Band Filter:</span> Skip trades where the allocation adjustment is within +/- 3% of total equity, unless initiating or fully liquidating.</li>
         <li class="gate-item"><span class="gate-name">Buying Power Guard:</span> Prevents account overdrafts by maintaining a post-execution cash reserve of at least 5% of total equity.</li>
