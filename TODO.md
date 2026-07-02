@@ -50,21 +50,33 @@ These tasks adjust the pre-screener filters, entry gates, volatility gates, and 
 
 
 ## Category 2: Capital Preservation & Execution Controls
-These tasks handle price-based stops and profit locking to manage drawdowns and preserve gains.
+These tasks move risk management and capital preservation triggers out of the LLMs and into deterministic Python math.
 
-- [ ] **Implement Volatility-Adjusted Stop-Loss & Cool-Off Controls (Soft/Hard Stops)**
-  - **Risk Score**: 2/5 (Low Risk, but Medium Code Complexity)
-  - **Problem**: There is no price-based stop-loss in the strategy. High-beta technology stocks (like DELL, SMCI) have high natural weekly price swings (+/-15%), making static stops (like -12% or -20%) highly prone to stopping out on normal noise (whipsawing). Conversely, no stops exposes the concentrated 30% positions to catastrophic drawdowns.
-  - **Proposed Solution**: Implement a volatility-adjusted dynamic stop-loss framework combined with a re-entry lockout:
-    * **Dynamic Stops (ATR-Based)**: Calculate the soft and hard stop percentages dynamically on each run using the stock's 30-day Average True Range (ATR) relative to its purchase entry price (e.g., Soft Stop = $-2.5 \times \text{ATR}$ from entry; Hard Stop = $-4 \times \text{ATR}$ from entry). Low-volatility assets (like TLT) get tight stops, while high-beta assets get wide stops.
-    * **Soft Stop**: Overrides the 21-day minimum holding period constraint in `agent.py` prompts, allowing the portfolio analyst and risk critic to exit if sentiment decays.
-    * **Hard Stop**: Bypasses the multi-agent debate loop entirely in `agent.py` orchestration, forcing an immediate market-order liquidation of the position.
-    * **7-Day Re-Entry Cool-Off**: If an asset is stopped out (soft or hard), the pre-screener locks the system out from buying back into that ticker for 7 calendar days to prevent whipsawing.
+- [ ] **Implement 3x ATR Trailing Stop (Individual Risk)**
+  - **Risk Score**: 2/5 (Low Risk, Medium Complexity)
+  - **Problem**: High-beta tech stocks (like MRVL, SMCI) have high natural volatility. Static stops whipsaw easily, whereas having no stops exposes the concentrated 30% positions to catastrophic drawdowns during their 21-day lockup period.
+  - **Proposed Solution**: Build a deterministic 3x ATR Trailing Stop calculator:
+    * **Math Engine**: Accepts a ticker, entry date, and entry price. It queries yfinance starting **at least 30–40 trading days prior to the entry date** (crucial to avoid NaN values on recent purchases) and computes the 14-day ATR series.
+    * **Ratchet Rule (Monotonicity)**: The stop trails the highest peak price since entry: $\text{Stop}_t = \max(\text{Stop}_{t-1}, \text{High}_t - (3 \times \text{ATR}_t))$. The stop can only move up, never down.
+    * **Override Integration**: If a stock closes below the current stop, flag it as stopped out. In the daily pipeline, inject a strict override string `'SYSTEM OVERRIDE: 3x ATR Trailing Stop Breached. Must Liquidate.'` into that asset's watchlist metrics.
+    * **Agent Alignment**: Update instructions in both `portfolio_analyst` (Rule 3) and `senior_risk_advisor` (Rule 5) to explicitly respect this override string, letting them propose/approve liquidation even if `days_held` is less than 21 days.
+  - **Verification & Testing Plan**:
+    * **Scenario A (ATR Buffer)**: Mock a purchase made 2 days ago. Verify yfinance lookback correctly offset by 30 days to calculate valid ATR without NaN.
+    * **Scenario B (Monotonicity)**: Mock prices that rise, drop, and rise again. Verify stop price rises but never decreases.
+    * **Scenario C (Stop-Out Trigger)**: Mock close price crossing below the ratchet stop. Verify the pipeline injects the override string and agents propose/approve liquidation.
 
-- [ ] **Implement Trailing Take-Profit Controls (Trailing Profit Stop)**
-  - **Risk Score**: 3/5 (Moderate Risk, Medium Complexity)
-  - **Problem**: The 21-day minimum holding period prevents exiting winning trades early. In highly volatile sectors like AI, a stock can surge 35% in 10 days on a news catalyst, then give it all back over the next week before the 21 days expire, resulting in a round-trip of profits.
-  - **Proposed Solution**: Implement a trailing take-profit rule that overrides the 21-day lockup. If a position gains $+15\%$ or more, activate a $5\%$ trailing stop-loss (tracked by checking peak unrealized price in history or BigQuery portfolio snapshots) to lock in profits.
+- [ ] **Implement SPY 200-day SMA Macro Circuit Breaker (Systemic Risk)**
+  - **Risk Score**: 2/5 (Low Risk, Medium Complexity)
+  - **Problem**: Individual stock sentiment analysis fails to identify broader systemic market meltdowns, leaving the portfolio exposed during indices collapse.
+  - **Proposed Solution**: Build a macro circuit breaker override:
+    * **SMA Ingestion**: Fetch a full 1-year lookback of SPY history via yfinance (to guarantee 200 valid trading days) and calculate its 200-day Simple Moving Average (SMA).
+    * **Override Trigger**: If SPY's most recent close is below its 200-day SMA, set `macro_crash_detected = True`.
+    * **Pipeline Bypass**: If triggered, bypass the multi-agent debate loop entirely. Return a fully populated mock `AnalystProposal` object (90% allocated to TLT, 10% Cash) with structured schema fields to avoid downstream pipeline/reporting code crashes.
+    * **Resilience Guard**: Ensure network timeouts on yfinance are handled gracefully by logging a prominent warning and alerting Discord instead of failing silently.
+  - **Verification & Testing Plan**:
+    * **Scenario A (Circuit Breaker Safe)**: Mock SPY close above 200-day SMA. Verify pipeline proceeds to multi-agent debate.
+    * **Scenario B (Circuit Breaker Breach)**: Mock SPY close below 200-day SMA. Verify debate is bypassed and 90% TLT / 10% Cash rebalancing is executed.
+    * **Scenario C (Mock Schema Validation)**: Verify that the bypassed mock proposal does not fail BQ logging, BrokerExecutor delta checks, or Discord formatting.
 
 
 ## Category 3: Future Goals (High Risk & High Complexity)

@@ -11,8 +11,11 @@ logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 logger = logging.getLogger("check_buying_power")
 
 async def main():
-    # Resolve account number from environment or fallback
-    account_number = os.environ.get("ROBINHOOD_ACCOUNT_NUMBER", "YOUR_ACCOUNT_NUMBER")
+    # Resolve account number from environment
+    account_number = os.environ.get("ROBINHOOD_ACCOUNT_NUMBER")
+    if not account_number:
+        logger.error("ROBINHOOD_ACCOUNT_NUMBER environment variable is not set.")
+        return
     logger.info(f"Target Account: {account_number}")
 
     # Connect to Robinhood remote MCP server
