@@ -19,6 +19,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the application code
 COPY app.py .
+COPY pages/ pages/
 COPY .streamlit/ .streamlit/
 
 # Streamlit looks for configurations or secrets in standard paths

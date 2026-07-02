@@ -15,7 +15,7 @@ st.set_page_config(
     page_title="Autonomous Stock Trader Dashboard",
     page_icon="📈",
     layout="wide",
-    initial_sidebar_state="auto"
+    initial_sidebar_state="collapsed"
 )
 
 # 2. Modern Custom Styling

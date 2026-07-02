@@ -5,7 +5,7 @@ st.set_page_config(
     page_title="Portfolio Decision Logic - Autonomous Stock Trader",
     page_icon="🧠",
     layout="wide",
-    initial_sidebar_state="auto"
+    initial_sidebar_state="collapsed"
 )
 
 # 2. Modern Custom Styling matching the main dashboard
