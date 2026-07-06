@@ -309,6 +309,11 @@ def format_thesis_html(text: str, max_chars: int = 60) -> str:
     """
 
 # 4. Main App Rendering
+if "clear_cache" in st.query_params:
+    st.cache_data.clear()
+    del st.query_params["clear_cache"]
+    st.rerun()
+
 st.title("Autonomous Stock Trader")
 st.markdown("<p style='font-size: 1.1rem; color: #475569; margin-top: -1.5rem; margin-bottom: 2rem;'><strong>Fully end-to-end:</strong> Ingests daily market news via yfinance, analyzes sentiment with Gemini, deterministically ranks conviction, and executes live orders via <strong>MCP with Agentic Robinhood using real $$$</strong>.</p>", unsafe_allow_html=True)
 
