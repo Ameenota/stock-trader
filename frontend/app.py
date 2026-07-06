@@ -447,7 +447,12 @@ with col_perf:
                     color_discrete_map={
                         'Agent Portfolio': '#2563eb',
                         'S&P 500 (SPY)': '#94a3b8'
-                    }
+                    },
+                    markers=True
+                )
+                fig_line.update_traces(
+                    connectgaps=True,
+                    marker=dict(size=6, symbol='circle')
                 )
                 
                 fig_line.update_layout(
