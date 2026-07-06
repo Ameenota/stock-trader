@@ -1,10 +1,8 @@
 # Autonomous Stock Trader: End-to-End Agentic Portfolio Manager
 
-This repository contains the **Autonomous Stock Trader**, a fully automated trading and portfolio management system built as a Capstone submission for Google's **5-Day AI Agents Intensive Vibe Coding Course**. 
 
 The system leverages Google's Gemini models, the Agent Development Kit (ADK), Model Context Protocol (MCP) servers, and BigQuery data warehousing to evaluate market signals, manage risk, execute trades with real $$ on a $100 Robinhood account, and visualize performance in near real-time.
 
-- **Kaggle Contest**: [Google AI Agents Intensive Capstone Project](https://www.kaggle.com/competitions/5-day-ai-agents-intensive-vibecoding-course-with-google)
 - **Live Deployed Dashboard**: [Streamlit Portfolio Dashboard](https://portfolio-dashboard-412197301452.us-central1.run.app)
 
 ---
@@ -223,14 +221,3 @@ The frontend Streamlit app is containerized via `frontend/Dockerfile` and serves
 
 ## 📋 Open TODO List 
 
-To complete your Kaggle Capstone Project submission, you must perform the following actions:
-
-- [ ] **Record a Demo Video**:
-  Record a 5-10 minute video showing:
-  1. The code structure and dual-agent prompt setups.
-  2. The BigQuery tables capturing signal logs and trade history.
-  3. The live Streamlit dashboard showing allocations and executed trade logs.
-- [ ] **Publish Walkthrough Link**:
-  Upload the demo video (to YouTube, Loom, or Drive) and replace `[Insert Link to Your Recorded Walkthrough Video Here]` at the top of this README.
-- [ ] **Post Submission Writeup on Kaggle**:
-  Submit your Capstone write-up under the [Kaggle Capstone Project Discussion Forum](https://www.kaggle.com/competitions/5-day-ai-agents-intensive-vibecoding-course-with-google/discussion/709721) by creating a post containing this write-up, linking to this repository and your live dashboard URL.
