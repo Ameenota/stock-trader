@@ -222,7 +222,43 @@ async def test_execution_controller_overdraft_guardrail(mock_log_trade):
 
     with patch.dict(os.environ, {"SKIP_LIVE_TRADES": "false"}):
         await controller.execute_rebalance(approved_allocations)
-
         # 2. Assertions: place_equity_order should NOT be called because of overdraft guardrail!
         mock_place_equity_order.run_async.assert_not_called()
         mock_log_trade.assert_not_called()
+
+
+@pytest.mark.asyncio
+@patch("app.tools.robinhood_service.fetch_robinhood_portfolio_state")
+@patch("app.tools.bigquery_service.insert_portfolio_snapshot")
+async def test_log_portfolio_snapshot_calculates_correct_unrealized_gain_loss(mock_insert, mock_fetch_state):
+    """Verify that log_portfolio_snapshot correctly calculates position-level unrealized gain/loss."""
+    # Mock data:
+    # cash = 11.00, buying_power = 11.00
+    # Holdings:
+    # 1. MU: 2 shares @ avg buy price $10, current price $12 (equity $24, gain +$4)
+    # 2. MRVL: 5 shares @ avg buy price $6, current price $5 (equity $25, loss -$5)
+    # Total holdings equity = $49.00
+    # Total cost basis = 2 * 10 + 5 * 6 = $50.00
+    # Expected unrealized gain/loss = $49.00 - $50.00 = -$1.00
+    # Expected unrealized gain/loss percent = -1.0 / 50.0 * 100 = -2.0%
+    mock_fetch_state.return_value = (
+        11.00,
+        11.00,
+        [
+            {"symbol": "MU", "shares": 2.0, "average_buy_price": 10.0, "current_price": 12.0, "equity": 24.0},
+            {"symbol": "MRVL", "shares": 5.0, "average_buy_price": 6.0, "current_price": 5.0, "equity": 25.0}
+        ]
+    )
+
+    from app.tools.robinhood_service import log_portfolio_snapshot
+    with patch.dict(os.environ, {"ROBINHOOD_ACCOUNT_NUMBER": "586548661", "SKIP_LIVE_TRADES": "true"}):
+        await log_portfolio_snapshot(summary="Test summary", dataset_id="test_dataset")
+
+    mock_insert.assert_called_once()
+    snapshot = mock_insert.call_args[0][0]
+    
+    assert snapshot["total_equity"] == 60.0  # 11.00 cash + 49.00 holdings
+    assert snapshot["total_cash"] == 11.00
+    assert snapshot["unrealized_gain_loss"] == -1.0
+    assert snapshot["unrealized_gain_loss_percent"] == -2.0
+    assert snapshot["account_number"] == "••••48661"

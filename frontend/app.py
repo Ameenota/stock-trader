@@ -319,6 +319,7 @@ st.markdown("<p style='font-size: 1.1rem; color: #475569; margin-top: -1.5rem; m
 
 # Load data
 snap = load_latest_snapshot()
+df_daily = load_portfolio_history()
 recs_df = load_latest_recommendations()
 graveyard_df = load_latest_graveyard()
 trades_df = load_trade_history()
@@ -385,9 +386,6 @@ with col_gauge:
     st.plotly_chart(fig_gauge, use_container_width=True)
 
 with col_perf:
-    # 1. Load portfolio total value history from BigQuery (cached & daily-deduplicated)
-    df_daily = load_portfolio_history()
-    
     if df_daily.empty or len(df_daily) < 1:
         st.markdown("<div style='text-align: center; color: #475569; font-size: 0.9rem; margin-top: 2.5rem;'>Performance history comparison will populate once snapshots are logged.</div>", unsafe_allow_html=True)
     else:
@@ -396,12 +394,15 @@ with col_perf:
         end_date = datetime.now(timezone.utc).date()
         start_date = end_date - timedelta(days=6) # 7 days total (today + 6 days back)
         
-        # Download S&P 500 (SPY) for the same range (cached)
+        # Download S&P 500 (SPY) starting from portfolio inception date to resolve baseline comparison
         try:
-            start_str = start_date.strftime("%Y-%m-%d")
-            end_str = (end_date + timedelta(days=2)).strftime("%Y-%m-%d")
+            inception_date = df_daily['date'].iloc[0]
+            first_equity = df_daily['total_equity'].iloc[0]
             
-            spy_df = fetch_spy_history(start_str, end_str)
+            spy_start_str = inception_date.strftime("%Y-%m-%d")
+            spy_end_str = (end_date + timedelta(days=2)).strftime("%Y-%m-%d")
+            
+            spy_df = fetch_spy_history(spy_start_str, spy_end_str)
             
             if not spy_df.empty:
                 # Create a date backbone of all 7 days in the range
@@ -422,18 +423,12 @@ with col_perf:
                     first_valid_date = first_portfolio_row['date'].iloc[0]
                     merged = merged[merged['date'] >= first_valid_date].copy()
                 
-                # Calculate base-100 return starting on the first valid portfolio snapshot day
-                merged_valid = merged.dropna(subset=['total_equity']).copy()
+                # Calculate base-100 return starting from the inception values
+                spy_df_valid = spy_df.dropna(subset=['SPY'])
+                first_spy = spy_df_valid['SPY'].iloc[0] if not spy_df_valid.empty else 100.0
                 
-                if not merged_valid.empty:
-                    first_equity = merged_valid['total_equity'].iloc[0]
-                    first_spy = merged_valid['SPY'].iloc[0]
-                    
-                    merged['Agent Portfolio'] = (merged['total_equity'] / first_equity) * 100 if first_equity > 0 else 100.0
-                    merged['S&P 500 (SPY)'] = (merged['SPY'] / first_spy) * 100 if first_spy > 0 else 100.0
-                else:
-                    merged['Agent Portfolio'] = pd.Series(dtype='float64')
-                    merged['S&P 500 (SPY)'] = pd.Series(dtype='float64')
+                merged['Agent Portfolio'] = (merged['total_equity'] / first_equity) * 100 if first_equity > 0 else 100.0
+                merged['S&P 500 (SPY)'] = (merged['SPY'] / first_spy) * 100 if first_spy > 0 else 100.0
                 
                 # Melt for plotting
                 plot_df = merged.melt(id_vars=['date'], value_vars=['Agent Portfolio', 'S&P 500 (SPY)'], var_name='Metric', value_name='Normalized Value')
@@ -492,10 +487,15 @@ with col_right:
 # Metrics & Allocation Panel
 m1, m2, m3, m4 = st.columns([1, 1, 1, 1.2])
 with m1:
+    if not df_daily.empty:
+        first_equity = df_daily['total_equity'].iloc[0]
+        total_return_percent = ((snap['total_equity'] - first_equity) / first_equity * 100.0) if first_equity > 0 else 0.0
+    else:
+        total_return_percent = snap['unrealized_gain_loss_percent']
     st.metric(
         label="Net Portfolio Value",
         value=f"${snap['total_equity']:.2f}",
-        delta=f"{snap['unrealized_gain_loss_percent']:.2f}% Total Return"
+        delta=f"{total_return_percent:.2f}% Total Return"
     )
 with m2:
     pending_cash = max(0.0, snap['total_cash'] - snap['buying_power'])

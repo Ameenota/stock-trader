@@ -170,8 +170,11 @@ async def log_portfolio_snapshot(summary: str | None = None, dataset_id: str = "
     total_cash, buying_power, holdings = await fetch_robinhood_portfolio_state(account_number)
     holdings_value = sum(h["equity"] for h in holdings)
     total_equity = total_cash + holdings_value
-    unrealized_gain_loss = total_equity - 100.0
-    unrealized_gain_loss_percent = (unrealized_gain_loss / 100.0) * 100.0
+    
+    # Calculate actual position-level unrealized gain/loss
+    total_cost_basis = sum(h["shares"] * h["average_buy_price"] for h in holdings)
+    unrealized_gain_loss = holdings_value - total_cost_basis
+    unrealized_gain_loss_percent = (unrealized_gain_loss / total_cost_basis * 100.0) if total_cost_basis > 0.0 else 0.0
 
     snapshot = {
         "account_number": f"••••{account_number[-5:]}" if len(account_number) >= 5 else account_number,
