@@ -61,7 +61,7 @@ async def test_escalation_checker_rejected():
 
 @pytest.mark.asyncio
 async def test_execution_controller_rebalance_calculations():
-    """Verify that BrokerExecutor calculates deltas correctly and honors position/cash tolerance bounds."""
+    """Verify that raw agent allocations cannot cross the execution boundary."""
     # 1. Mock the Robinhood tools
     mock_get_portfolio = AsyncMock()
     mock_get_portfolio.run_async.return_value = {
@@ -137,29 +137,6 @@ async def test_execution_controller_rebalance_calculations():
         dataset_id="test_dataset"
     )
 
-    # 3. Patch insert_trade_record to avoid BQ logging during tests
-    with patch("app.broker_executor.insert_trade_record") as mock_log_trade:
-        # Enforce dry-run mode to bypass real calls
-        os.environ["SKIP_LIVE_TRADES"] = "true"
+    with pytest.raises(TypeError, match="ValidatedExecutionPlan"):
         await controller.execute_rebalance(approved_allocations)
-
-        # 4. Verify orders placed:
-        # Sells first: DELL should be scaled down from $56 to $30 (delta of -$26.00). Price = $28.00 -> sell 26/28 = 0.928571 shares.
-        # Buys second: TSM should be purchased from $0 to $30 (delta of +$30.00). Price = $30.00 -> buy 30/30 = 1.000000 shares.
-        # MU should be skipped (within tolerance).
-        
-        # Verify that insert_trade_record was called with the correct details
-        trade_calls = mock_log_trade.call_args_list
-        assert len(trade_calls) == 2
-        
-        # Sells first
-        first_call = trade_calls[0]
-        assert first_call[1]["ticker"] == "DELL"
-        assert first_call[1]["action"] == "SELL"
-        assert pytest.approx(first_call[1]["amount_usd"], 0.1) == 26.0
-        
-        # Buys second
-        second_call = trade_calls[1]
-        assert second_call[1]["ticker"] == "TSM"
-        assert second_call[1]["action"] == "BUY"
-        assert pytest.approx(second_call[1]["amount_usd"], 0.1) == 30.0
+    mock_toolset.get_tools.assert_not_awaited()

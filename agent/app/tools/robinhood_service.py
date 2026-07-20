@@ -13,12 +13,152 @@
 # limitations under the License.
 
 import os
-import sys
-from typing import Tuple, List, Dict, Any
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+import math
+from typing import Any
 from google.adk.tools.mcp_tool import McpToolset
 from google.adk.tools.mcp_tool.mcp_session_manager import StdioConnectionParams
 from mcp import StdioServerParameters
 from app.tools.ticker_universe import get_allowed_tickers
+
+
+class BrokerConnectionError(RuntimeError):
+    pass
+
+
+class BrokerPayloadError(RuntimeError):
+    pass
+
+
+class BrokerToolUnavailableError(RuntimeError):
+    pass
+
+
+class QuoteValidationError(RuntimeError):
+    pass
+
+
+class OrderRejectedError(RuntimeError):
+    pass
+
+
+class OrderStateUnknownError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True)
+class BrokerHolding:
+    symbol: str
+    shares: float
+    average_buy_price: float
+    current_price: float
+
+    @property
+    def equity(self) -> float:
+        return self.shares * self.current_price
+
+
+@dataclass(frozen=True)
+class BrokerPortfolioState:
+    account_number: str
+    observed_at: datetime
+    cash: float
+    buying_power: float
+    holdings: tuple[BrokerHolding, ...]
+
+
+@dataclass(frozen=True)
+class QuoteSnapshot:
+    symbol: str
+    price: float
+    observed_at: datetime
+
+
+def _finite_non_negative(value: Any, field: str) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise BrokerPayloadError(f"{field} must be numeric") from exc
+    if not math.isfinite(number) or number < 0:
+        raise BrokerPayloadError(f"{field} must be finite and non-negative")
+    return number
+
+
+def validate_account_number(account_number: str) -> str:
+    value = str(account_number).strip()
+    if not value.endswith("48661"):
+        raise ValueError(f"Unauthorized Robinhood account '{value}'.")
+    return value
+
+
+def validate_order_ticker(ticker: str) -> str:
+    value = str(ticker).strip().upper()
+    if value not in set(get_allowed_tickers()):
+        raise ValueError(f"Ticker '{value}' is outside the authorized asset universe.")
+    return value
+
+
+def _data_payload(response: Any, tool_name: str) -> dict:
+    if not isinstance(response, dict):
+        raise BrokerPayloadError(f"{tool_name} returned a non-object payload")
+    structured = response.get("structuredContent")
+    if not isinstance(structured, dict) or not isinstance(structured.get("data"), dict):
+        raise BrokerPayloadError(f"{tool_name} response is missing structuredContent.data")
+    return structured["data"]
+
+
+def parse_quotes(response: Any, required_tickers: set[str], *, received_at: datetime | None = None) -> dict[str, QuoteSnapshot]:
+    received_at = received_at or datetime.now(timezone.utc)
+    data = _data_payload(response, "get_equity_quotes")
+    results = data.get("results")
+    if not isinstance(results, list):
+        raise QuoteValidationError("get_equity_quotes response is missing results")
+    parsed: dict[str, QuoteSnapshot] = {}
+    for result in results:
+        quote = result.get("quote") if isinstance(result, dict) else None
+        if not isinstance(quote, dict):
+            raise QuoteValidationError("quote result is malformed")
+        symbol = str(quote.get("symbol", "")).strip().upper()
+        if not symbol or symbol in parsed:
+            raise QuoteValidationError(f"duplicate or missing quote symbol: {symbol!r}")
+        raw_price = quote.get("last_non_reg_trade_price") or quote.get("last_trade_price")
+        try:
+            price = float(raw_price)
+        except (TypeError, ValueError) as exc:
+            raise QuoteValidationError(f"invalid quote price for {symbol}") from exc
+        if not math.isfinite(price) or price <= 0 or price > 1_000_000:
+            raise QuoteValidationError(f"invalid quote price for {symbol}")
+        bid_raw, ask_raw = quote.get("bid_price"), quote.get("ask_price")
+        if bid_raw is not None and ask_raw is not None:
+            try:
+                bid, ask = float(bid_raw), float(ask_raw)
+            except (TypeError, ValueError) as exc:
+                raise QuoteValidationError(f"invalid bid/ask for {symbol}") from exc
+            if not all(math.isfinite(value) and value > 0 for value in (bid, ask)) or bid > ask:
+                raise QuoteValidationError(f"crossed or invalid market for {symbol}")
+        observed_at = received_at
+        raw_timestamp = quote.get("timestamp") or quote.get("updated_at") or quote.get("last_trade_at")
+        if raw_timestamp is not None:
+            try:
+                if isinstance(raw_timestamp, (int, float)):
+                    observed_at = datetime.fromtimestamp(float(raw_timestamp), tz=timezone.utc)
+                else:
+                    observed_at = datetime.fromisoformat(str(raw_timestamp).replace("Z", "+00:00"))
+                if observed_at.tzinfo is None:
+                    observed_at = observed_at.replace(tzinfo=timezone.utc)
+            except (TypeError, ValueError, OSError) as exc:
+                raise QuoteValidationError(f"invalid quote timestamp for {symbol}") from exc
+            if observed_at > received_at + timedelta(seconds=5) or received_at - observed_at > timedelta(seconds=120):
+                raise QuoteValidationError(f"stale quote for {symbol}")
+        parsed[symbol] = QuoteSnapshot(symbol, price, observed_at)
+    missing = {ticker.upper() for ticker in required_tickers} - set(parsed)
+    extra_duplicates = set(parsed) - {ticker.upper() for ticker in required_tickers}
+    if missing:
+        raise QuoteValidationError(f"missing quotes for: {', '.join(sorted(missing))}")
+    if extra_duplicates:
+        parsed = {ticker: quote for ticker, quote in parsed.items() if ticker in required_tickers}
+    return parsed
 
 async def validate_and_intercept_trades(tool, args, tool_context) -> dict | None:
     """Interceptor callback (Double Guardrail + Dry Run) for trading execution."""
@@ -87,68 +227,63 @@ robinhood_toolset = McpToolset(
 )
 
 
-async def fetch_robinhood_portfolio_state(account_number: str) -> Tuple[float, float, List[Dict[str, Any]]]:
-    """Queries Robinhood MCP tools for current cash, buying power and holdings.
-    
-    Returns:
-        A tuple (total_cash, buying_power, holdings) where holdings is a list of dicts.
-    """
-    total_cash = 100.0
-    buying_power = 100.0
-    holdings = []
-
+async def fetch_robinhood_portfolio_state(account_number: str, *, toolset=None) -> BrokerPortfolioState:
+    """Fetch authoritative broker state or raise; never return tradable fallbacks."""
+    account_number = validate_account_number(account_number)
+    selected_toolset = toolset or robinhood_toolset
     try:
-        tools = await robinhood_toolset.get_tools()
-        tools_dict = {t.name: t for t in tools}
-
-        if "get_portfolio" in tools_dict:
-            try:
-                port_res = await tools_dict["get_portfolio"].run_async(args={"account_number": account_number}, tool_context=None)
-                data = port_res.get("structuredContent", {}).get("data", {})
-                total_cash = float(data.get("cash", 100.0))
-                buying_power = float(data.get("buying_power", {}).get("buying_power", total_cash))
-            except Exception as e:
-                print(f"   [ERROR] get_portfolio failed: {e}")
-
-        if "get_equity_positions" in tools_dict:
-            try:
-                pos_res = await tools_dict["get_equity_positions"].run_async(args={"account_number": account_number}, tool_context=None)
-                positions = pos_res.get("structuredContent", {}).get("data", {}).get("positions", [])
-                
-                active_symbols = []
-                symbol_shares = {}
-                symbol_cost = {}
-                
-                for pos in positions:
-                    qty = float(pos.get("quantity", 0))
-                    if qty > 0:
-                        sym = pos["symbol"]
-                        active_symbols.append(sym)
-                        symbol_shares[sym] = qty
-                        symbol_cost[sym] = float(pos.get("average_buy_price", 0))
-
-                if active_symbols and "get_equity_quotes" in tools_dict:
-                    quotes_res = await tools_dict["get_equity_quotes"].run_async(args={"symbols": active_symbols}, tool_context=None)
-                    results = quotes_res.get("structuredContent", {}).get("data", {}).get("results", [])
-                    for res in results:
-                        quote = res.get("quote", {})
-                        sym = quote.get("symbol")
-                        if sym in symbol_shares:
-                            price = float(quote.get("last_non_reg_trade_price") or quote.get("last_trade_price") or 0.0)
-                            qty = symbol_shares[sym]
-                            holdings.append({
-                                "symbol": sym,
-                                "shares": qty,
-                                "average_buy_price": symbol_cost[sym],
-                                "current_price": price,
-                                "equity": qty * price
-                            })
-            except Exception as e:
-                print(f"   [ERROR] get_equity_positions failed: {e}")
-    except Exception as e:
-        print(f"   Warning: Failed to fetch live portfolio state from Robinhood: {e}")
-
-    return total_cash, buying_power, holdings
+        tools = await selected_toolset.get_tools()
+    except Exception as exc:
+        raise BrokerConnectionError("Failed to connect to Robinhood tools") from exc
+    tools_dict = {tool.name: tool for tool in tools}
+    for required in ("get_portfolio", "get_equity_positions"):
+        if required not in tools_dict:
+            raise BrokerToolUnavailableError(f"Required broker tool is unavailable: {required}")
+    try:
+        portfolio_response = await tools_dict["get_portfolio"].run_async(
+            args={"account_number": account_number}, tool_context=None
+        )
+        positions_response = await tools_dict["get_equity_positions"].run_async(
+            args={"account_number": account_number}, tool_context=None
+        )
+    except Exception as exc:
+        raise BrokerConnectionError("Broker state request failed") from exc
+    portfolio_data = _data_payload(portfolio_response, "get_portfolio")
+    positions_data = _data_payload(positions_response, "get_equity_positions")
+    cash = _finite_non_negative(portfolio_data.get("cash"), "cash")
+    buying_power_data = portfolio_data.get("buying_power")
+    if not isinstance(buying_power_data, dict) or "buying_power" not in buying_power_data:
+        raise BrokerPayloadError("get_portfolio response is missing buying_power.buying_power")
+    buying_power = _finite_non_negative(buying_power_data["buying_power"], "buying_power")
+    raw_positions = positions_data.get("positions")
+    if not isinstance(raw_positions, list):
+        raise BrokerPayloadError("get_equity_positions response is missing positions")
+    raw_holdings: list[tuple[str, float, float]] = []
+    for position in raw_positions:
+        if not isinstance(position, dict):
+            raise BrokerPayloadError("position is malformed")
+        symbol = validate_order_ticker(position.get("symbol", ""))
+        shares = _finite_non_negative(position.get("quantity"), f"{symbol}.quantity")
+        average_price = _finite_non_negative(position.get("average_buy_price", 0), f"{symbol}.average_buy_price")
+        if shares > 0:
+            raw_holdings.append((symbol, shares, average_price))
+    symbols = {item[0] for item in raw_holdings}
+    if symbols and "get_equity_quotes" not in tools_dict:
+        raise BrokerToolUnavailableError("Required broker tool is unavailable: get_equity_quotes")
+    quote_map = {}
+    if symbols:
+        try:
+            quote_response = await tools_dict["get_equity_quotes"].run_async(
+                args={"symbols": sorted(symbols)}, tool_context=None
+            )
+        except Exception as exc:
+            raise BrokerConnectionError("Broker quote request failed") from exc
+        quote_map = parse_quotes(quote_response, symbols)
+    holdings = tuple(
+        BrokerHolding(symbol, shares, average_price, quote_map[symbol].price)
+        for symbol, shares, average_price in raw_holdings
+    )
+    return BrokerPortfolioState(account_number, datetime.now(timezone.utc), cash, buying_power, holdings)
 
 
 async def log_portfolio_snapshot(summary: str | None = None, dataset_id: str = "portfolio_analytics") -> None:
@@ -167,9 +302,19 @@ async def log_portfolio_snapshot(summary: str | None = None, dataset_id: str = "
     if not account_number or not str(account_number).endswith("48661"):
         raise RuntimeError(f"Security Guardrail: Unauthorized Robinhood account '{account_number}'. All operations restricted to accounts ending in 48661.")
 
-    total_cash, buying_power, holdings = await fetch_robinhood_portfolio_state(account_number)
+    state = await fetch_robinhood_portfolio_state(account_number)
+    holdings = [
+        {
+            "symbol": holding.symbol,
+            "shares": holding.shares,
+            "average_buy_price": holding.average_buy_price,
+            "current_price": holding.current_price,
+            "equity": holding.equity,
+        }
+        for holding in state.holdings
+    ]
     holdings_value = sum(h["equity"] for h in holdings)
-    total_equity = total_cash + holdings_value
+    total_equity = state.cash + holdings_value
     
     # Calculate actual position-level unrealized gain/loss
     total_cost_basis = sum(h["shares"] * h["average_buy_price"] for h in holdings)
@@ -179,8 +324,8 @@ async def log_portfolio_snapshot(summary: str | None = None, dataset_id: str = "
     snapshot = {
         "account_number": f"••••{account_number[-5:]}" if len(account_number) >= 5 else account_number,
         "total_equity": total_equity,
-        "total_cash": total_cash,
-        "buying_power": buying_power,
+        "total_cash": state.cash,
+        "buying_power": state.buying_power,
         "unrealized_gain_loss": unrealized_gain_loss,
         "unrealized_gain_loss_percent": unrealized_gain_loss_percent,
         "holdings": json.dumps(holdings),

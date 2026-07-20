@@ -107,7 +107,13 @@ The advisor reviews the draft proposal against path-dependent risk gates and iss
     * **Breakout Check**: Verify that `is_20d_high = True` and `macd_bullish_cross = True`.
 
 ### 3. Mediation & Loop Resolution
-If the Advisor rejects the proposal, it provides mathematical feedback, and the Analyst generates a revised proposal. This cycle repeats for up to **5 iterations**. If approved (or upon reaching the iteration limit), the finalized target allocations are exported for execution.
+If the Advisor rejects the proposal, it provides mathematical feedback, and the Analyst generates a revised proposal. This cycle repeats for up to **5 iterations**. Reaching the limit is not approval: a missing or rejected final critique cancels execution.
+
+### 4. Deterministic Policy and Downside-Risk Authority
+
+The agents explain and propose; deterministic Python authorizes. The policy engine independently classifies `ENTER`, `ADD`, `HOLD`, `REDUCE`, and `EXIT`, checks the account/ticker allowlists, weights, exposure, cash reserve, data freshness, entry/exit gates, order cap, and stable decision ID. High sentiment volatility is an entry/add gate only and cannot liquidate an existing holding.
+
+Existing positions use a monotonic 14-session Wilder ATR trailing stop at 3x ATR. Completed SPY daily bars drive a 200-session SMA regime check. ATR breaches and macro risk-off can override the 21-day hold. Missing risk data blocks new exposure but does not manufacture a liquidation signal.
 
 ---
 
@@ -117,7 +123,7 @@ Once allocations are approved, the broker executor determines trade sizes and ap
 1. **Trade Delta Calculation**: Computes the difference between target weights and current holding weights:
    $$\text{Delta USD} = (\text{Target \%} - \text{Current \%}) \times \text{Total Portfolio Equity}$$
 2. **Tolerance Band Check**: The trade is skipped if the required change in weight is within **+/- 3%** of total equity, unless it represents a complete liquidation (target is 0%) or a brand new purchase (current weight is 0%).
-3. **Execution Order**: Sells (liquidations and reductions) are completed first to free up capital before any buy orders are placed.
+3. **Sell/Buy Separation**: A market date containing a reduction or liquidation is sell-only. Buys require a fresh proposal, fresh data, and a new validated decision on a later market date; deferred lists are never replayed automatically.
 4. **Buying Power Guard**: To prevent account overdrafts, buy orders are skipped if the total capital required for the purchases exceeds the spendable buying power:
    $$\text{Spendable Buying Power} = \text{Effective Buying Power} - (5\% \times \text{Total Portfolio Equity})$$
-   A minimum cash reserve of **5% of total equity** must always be maintained post-execution. If a buying power violation is triggered, all buy orders are held over until cash settles.
+   A minimum cash reserve of **5% of total equity** must always be maintained post-execution. If buying power is insufficient, the run is cancelled rather than using fallback balances.

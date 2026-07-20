@@ -57,7 +57,7 @@ graph TD
   - `portfolio_analyst`: Evaluates technical scores and conviction, proposing a target portfolio allocation (in percentages).
   - `senior_risk_advisor`: Reviews proposals as a critic, ensuring budget limits and technical entry thresholds are respected.
   - `escalation_checker`: Custom python agent that breaks the debate loop once a proposal is approved.
-  - **Decoupled Execution**: Execution logic is fully separated into a deterministic Python executor (`BrokerExecutor`), keeping brokerage calls completely isolated from LLM agents.
+  - **Deterministic Authorization & Execution**: LLM allocations must pass final advisor approval plus the typed `p0-v1` policy engine before `BrokerExecutor` can access broker tools. ATR/SPY overrides, fail-closed broker parsing, stable decision IDs, and sell-only market dates are enforced in Python.
 * **Model Context Protocol (MCP)**: The deterministic execution layer uses an active Robinhood MCP server to run queries (`get_portfolio`, `get_equity_positions`) and order tools (`place_equity_order`).
 * **Double Account Guardrails & Interceptor Callback**:
   - *Prompt Protection*: Instructs the agent to only target the account ending in `48661`.
@@ -212,12 +212,13 @@ The frontend Streamlit app is containerized via `frontend/Dockerfile` and serves
   - BigQuery Dataset: `portfolio_analytics`
   - Tables:
     * `infrastructure_market_metrics`: Daily watches, technical indicators (RSI/MACD/SMA), and Gemini sentiment analysis outputs.
-    * `trade_history`: Detailed execution logs of sequential orders.
+    * `trade_history`: Detailed submitted/accepted/filled/simulated order records keyed by decision ID.
     * `portfolio_snapshot`: Portfolio total equity, cash, and JSON-encoded holdings.
+    * `execution_runs`: Policy decisions, reason codes, execution status, and reconciliation results.
+    * `position_risk_state`: Monotonic ATR stop state for open positions.
   - Initialized automatically on startup via `setup_bigquery()` in [bigquery_service.py](file:///Users/sagar/Documents/ML/stock-trader/agent/app/tools/bigquery_service.py).
   - IAM Permissions: Make sure the service account running the Cloud Run Streamlit dashboard has `BigQuery Admin` or `BigQuery Data Editor` + `BigQuery Job User` roles.
 
 ---
 
 ## 📋 Open TODO List 
-

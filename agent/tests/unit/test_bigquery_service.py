@@ -21,6 +21,7 @@ from app.tools.bigquery_service import (
     insert_sentiment,
     get_latest_signals,
     insert_trade_record,
+    upsert_position_risk_state,
 )
 
 @pytest.fixture
@@ -45,8 +46,8 @@ def test_setup_bigquery(mock_bq_client):
     assert created_dataset.dataset_id == "test_dataset"
     assert created_dataset.location == "US"
 
-    # Assert tables were created (3 tables)
-    assert mock_bq_client.create_table.call_count == 3
+    # Assert all required tables were created.
+    assert mock_bq_client.create_table.call_count == 5
     
     # Verify first table (infrastructure_market_metrics)
     sentiment_table = mock_bq_client.create_table.call_args_list[0][0][0]
@@ -121,6 +122,13 @@ def test_setup_bigquery(mock_bq_client):
     assert snapshot_table.schema[5].field_type == "FLOAT"
     assert snapshot_table.schema[6].name == "holdings"
     assert snapshot_table.schema[6].field_type == "STRING"
+
+    execution_table = mock_bq_client.create_table.call_args_list[3][0][0]
+    assert execution_table.table_id == "execution_runs"
+    assert [field.name for field in execution_table.schema[:7]] == [
+        "decision_id", "created_at", "updated_at", "dry_run", "policy_version", "policy_allowed", "status"
+    ]
+    assert mock_bq_client.create_table.call_args_list[4][0][0].table_id == "position_risk_state"
 
 
 def test_insert_sentiment(mock_bq_client):
@@ -407,3 +415,24 @@ def test_setup_bigquery_updates_schema(mock_bq_client):
     updated_table = mock_bq_client.update_table.call_args[0][0]
     assert any(field.name == "analyst_consensus" for field in updated_table.schema)
     assert any(field.name == "target_price" for field in updated_table.schema)
+
+
+@patch("app.tools.bigquery_service.get_bigquery_client")
+def test_position_risk_state_rejects_lower_stop(mock_get_client):
+    client = MagicMock(project="test-project")
+    row = MagicMock(stop_price=95.0)
+    client.query.return_value.result.return_value = [row]
+    mock_get_client.return_value = client
+    with pytest.raises(ValueError, match="cannot be lowered"):
+        upsert_position_risk_state(
+            account_suffix="48661",
+            ticker="MU",
+            entry_timestamp=datetime(2026, 7, 1, tzinfo=timezone.utc),
+            last_session=datetime(2026, 7, 20).date(),
+            highest_high=110,
+            stop_price=94,
+            atr=5,
+            breached=False,
+            source="TEST",
+            dataset_id="test_dataset",
+        )

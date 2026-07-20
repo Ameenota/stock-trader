@@ -34,7 +34,19 @@ from app.tools.ticker_universe import get_active_tickers
 TICKERS = get_active_tickers()
 
 
-from datetime import datetime
+from datetime import datetime, timedelta
+
+
+def fetch_completed_daily_history(ticker: str, *, now: datetime, calendar_days: int) -> pd.DataFrame:
+    """Network adapter for risk controls; normalization remains pure."""
+    from app.risk_controls import completed_daily_bars
+
+    start = (now - timedelta(days=calendar_days)).date().isoformat()
+    end = (now + timedelta(days=1)).date().isoformat()
+    frame = yf.Ticker(ticker).history(start=start, end=end, auto_adjust=False)
+    if frame is None or frame.empty:
+        raise RuntimeError(f"No daily price history returned for {ticker}")
+    return completed_daily_bars(frame, now)
 
 def fetch_ticker_news(ticker: str, current_time: float | None = None) -> List[Dict[str, str]]:
     """Fetches news for a specific ticker and filters for the last 24 hours.

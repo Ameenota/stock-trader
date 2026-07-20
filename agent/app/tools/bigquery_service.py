@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from datetime import datetime, timezone
+import json
 import time
 from typing import List, Dict, Any
 from google.cloud import bigquery
@@ -89,6 +90,11 @@ def setup_bigquery(dataset_id: str = "portfolio_analytics") -> None:
         bigquery.SchemaField("timestamp", "TIMESTAMP", mode="REQUIRED"),
         bigquery.SchemaField("reasoning", "STRING", mode="NULLABLE"),
         bigquery.SchemaField("dry_run", "BOOLEAN", mode="NULLABLE"),
+        bigquery.SchemaField("decision_id", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("broker_order_id", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("order_status", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("requested_quantity", "FLOAT", mode="NULLABLE"),
+        bigquery.SchemaField("filled_quantity", "FLOAT", mode="NULLABLE"),
     ]
     trade_table = bigquery.Table(trade_table_id, schema=trade_schema)
     try:
@@ -124,6 +130,54 @@ def setup_bigquery(dataset_id: str = "portfolio_analytics") -> None:
             client.update_table(existing_table, ["schema"])
     except Exception:
         client.create_table(snapshot_table, exists_ok=True)
+
+    execution_table_id = f"{project}.{dataset_id}.execution_runs"
+    execution_schema = [
+        bigquery.SchemaField("decision_id", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("created_at", "TIMESTAMP", mode="REQUIRED"),
+        bigquery.SchemaField("updated_at", "TIMESTAMP", mode="REQUIRED"),
+        bigquery.SchemaField("dry_run", "BOOLEAN", mode="REQUIRED"),
+        bigquery.SchemaField("policy_version", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("policy_allowed", "BOOLEAN", mode="REQUIRED"),
+        bigquery.SchemaField("status", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("violations", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("proposal", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("execution_result", "STRING", mode="NULLABLE"),
+    ]
+    execution_table = bigquery.Table(execution_table_id, schema=execution_schema)
+    try:
+        existing_table = client.get_table(execution_table_id)
+        existing_fields = {field.name for field in existing_table.schema}
+        fields_to_add = [field for field in execution_schema if field.name not in existing_fields]
+        if fields_to_add:
+            existing_table.schema = list(existing_table.schema) + fields_to_add
+            client.update_table(existing_table, ["schema"])
+    except Exception:
+        client.create_table(execution_table, exists_ok=True)
+
+    risk_table_id = f"{project}.{dataset_id}.position_risk_state"
+    risk_schema = [
+        bigquery.SchemaField("account_suffix", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("ticker", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("entry_timestamp", "TIMESTAMP", mode="REQUIRED"),
+        bigquery.SchemaField("last_session", "DATE", mode="REQUIRED"),
+        bigquery.SchemaField("highest_high", "FLOAT", mode="REQUIRED"),
+        bigquery.SchemaField("stop_price", "FLOAT", mode="REQUIRED"),
+        bigquery.SchemaField("atr", "FLOAT", mode="REQUIRED"),
+        bigquery.SchemaField("breached", "BOOLEAN", mode="REQUIRED"),
+        bigquery.SchemaField("updated_at", "TIMESTAMP", mode="REQUIRED"),
+        bigquery.SchemaField("source", "STRING", mode="REQUIRED"),
+    ]
+    risk_table = bigquery.Table(risk_table_id, schema=risk_schema)
+    try:
+        existing_table = client.get_table(risk_table_id)
+        existing_fields = {field.name for field in existing_table.schema}
+        fields_to_add = [field for field in risk_schema if field.name not in existing_fields]
+        if fields_to_add:
+            existing_table.schema = list(existing_table.schema) + fields_to_add
+            client.update_table(existing_table, ["schema"])
+    except Exception:
+        client.create_table(risk_table, exists_ok=True)
 
 
 def _sanitize_string(s: str | None) -> str | None:
@@ -323,7 +377,12 @@ def insert_trade_record(
     timestamp: float | None = None, 
     reasoning: str | None = None,
     dry_run: bool | None = None,
-    dataset_id: str = "portfolio_analytics"
+    dataset_id: str = "portfolio_analytics",
+    decision_id: str | None = None,
+    broker_order_id: str | None = None,
+    order_status: str | None = None,
+    requested_quantity: float | None = None,
+    filled_quantity: float | None = None,
 ) -> None:
     """Inserts a trade receipt (ticker, action, amount_usd, timestamp, reasoning, dry_run) into the trade_history table.
 
@@ -354,8 +413,16 @@ def insert_trade_record(
         "amount_usd": float(amount_usd),
         "timestamp": timestamp_str,
         "reasoning": reasoning,
-        "dry_run": bool(dry_run)
+        "dry_run": bool(dry_run),
     }
+    optional_fields = {
+        "decision_id": decision_id,
+        "broker_order_id": broker_order_id,
+        "order_status": order_status,
+        "requested_quantity": requested_quantity,
+        "filled_quantity": filled_quantity,
+    }
+    row_to_insert.update({key: value for key, value in optional_fields.items() if value is not None})
     
     try:
         job_config = bigquery.LoadJobConfig(
@@ -723,3 +790,134 @@ def get_recently_sold_tickers(
         return []
 
 
+EXECUTION_RUN_STATUSES = {
+    "POLICY_REJECTED",
+    "VALIDATED",
+    "EXECUTING",
+    "COMPLETED",
+    "ABORTED",
+    "RECONCILIATION_FAILED",
+}
+
+
+def execution_run_exists(decision_id: str, dry_run: bool, dataset_id: str = "portfolio_analytics") -> bool:
+    client = get_bigquery_client()
+    table_id = f"{client.project}.{dataset_id}.execution_runs"
+    query = f"SELECT 1 FROM `{table_id}` WHERE decision_id = @decision_id AND dry_run = @dry_run LIMIT 1"
+    config = bigquery.QueryJobConfig(query_parameters=[
+        bigquery.ScalarQueryParameter("decision_id", "STRING", decision_id),
+        bigquery.ScalarQueryParameter("dry_run", "BOOL", dry_run),
+    ])
+    try:
+        return bool(list(client.query(query, job_config=config).result()))
+    except Exception as exc:
+        raise RuntimeError(f"Failed to check execution run: {exc}") from exc
+
+
+def insert_execution_run(
+    *,
+    decision_id: str,
+    dry_run: bool,
+    policy_version: str,
+    policy_allowed: bool,
+    status: str,
+    violations: object = None,
+    proposal: object = None,
+    execution_result: object = None,
+    dataset_id: str = "portfolio_analytics",
+) -> None:
+    if status not in EXECUTION_RUN_STATUSES:
+        raise ValueError(f"Invalid execution run status: {status}")
+    client = get_bigquery_client()
+    now = datetime.now(timezone.utc).isoformat()
+    row = {
+        "decision_id": decision_id,
+        "created_at": now,
+        "updated_at": now,
+        "dry_run": dry_run,
+        "policy_version": policy_version,
+        "policy_allowed": policy_allowed,
+        "status": status,
+        "violations": json.dumps(violations, default=str) if violations is not None else None,
+        "proposal": json.dumps(proposal, default=str) if proposal is not None else None,
+        "execution_result": json.dumps(execution_result, default=str) if execution_result is not None else None,
+    }
+    table_id = f"{client.project}.{dataset_id}.execution_runs"
+    job = client.load_table_from_json([row], table_id, job_config=bigquery.LoadJobConfig(write_disposition="WRITE_APPEND"))
+    job.result()
+
+
+def update_execution_run(
+    decision_id: str,
+    dry_run: bool,
+    status: str,
+    *,
+    execution_result: object = None,
+    dataset_id: str = "portfolio_analytics",
+) -> None:
+    if status not in EXECUTION_RUN_STATUSES:
+        raise ValueError(f"Invalid execution run status: {status}")
+    client = get_bigquery_client()
+    table_id = f"{client.project}.{dataset_id}.execution_runs"
+    query = f"""
+        UPDATE `{table_id}`
+        SET updated_at = CURRENT_TIMESTAMP(), status = @status, execution_result = @execution_result
+        WHERE decision_id = @decision_id AND dry_run = @dry_run
+    """
+    config = bigquery.QueryJobConfig(query_parameters=[
+        bigquery.ScalarQueryParameter("status", "STRING", status),
+        bigquery.ScalarQueryParameter("execution_result", "STRING", json.dumps(execution_result, default=str) if execution_result is not None else None),
+        bigquery.ScalarQueryParameter("decision_id", "STRING", decision_id),
+        bigquery.ScalarQueryParameter("dry_run", "BOOL", dry_run),
+    ])
+    client.query(query, job_config=config).result()
+
+
+def upsert_position_risk_state(
+    *,
+    account_suffix: str,
+    ticker: str,
+    entry_timestamp: datetime,
+    last_session,
+    highest_high: float,
+    stop_price: float,
+    atr: float,
+    breached: bool,
+    source: str,
+    dataset_id: str = "portfolio_analytics",
+) -> None:
+    """Persist a monotonic stop. A lower replacement is rejected by the MERGE."""
+    client = get_bigquery_client()
+    table_id = f"{client.project}.{dataset_id}.position_risk_state"
+    existing_query = f"SELECT stop_price FROM `{table_id}` WHERE account_suffix=@account_suffix AND ticker=@ticker LIMIT 1"
+    lookup_config = bigquery.QueryJobConfig(query_parameters=[
+        bigquery.ScalarQueryParameter("account_suffix", "STRING", account_suffix),
+        bigquery.ScalarQueryParameter("ticker", "STRING", ticker.upper()),
+    ])
+    existing_rows = list(client.query(existing_query, job_config=lookup_config).result())
+    if existing_rows and float(existing_rows[0].stop_price) > float(stop_price):
+        raise ValueError("Persisted trailing stop cannot be lowered")
+    query = f"""
+        MERGE `{table_id}` target
+        USING (SELECT @account_suffix account_suffix, @ticker ticker) source
+        ON target.account_suffix = source.account_suffix AND target.ticker = source.ticker
+        WHEN MATCHED AND @stop_price >= target.stop_price THEN UPDATE SET
+          last_session=@last_session, highest_high=GREATEST(target.highest_high, @highest_high),
+          stop_price=@stop_price, atr=@atr, breached=@breached, updated_at=CURRENT_TIMESTAMP(), source=@source_name
+        WHEN NOT MATCHED THEN INSERT
+          (account_suffix,ticker,entry_timestamp,last_session,highest_high,stop_price,atr,breached,updated_at,source)
+        VALUES
+          (@account_suffix,@ticker,@entry_timestamp,@last_session,@highest_high,@stop_price,@atr,@breached,CURRENT_TIMESTAMP(),@source_name)
+    """
+    config = bigquery.QueryJobConfig(query_parameters=[
+        bigquery.ScalarQueryParameter("account_suffix", "STRING", account_suffix),
+        bigquery.ScalarQueryParameter("ticker", "STRING", ticker.upper()),
+        bigquery.ScalarQueryParameter("entry_timestamp", "TIMESTAMP", entry_timestamp),
+        bigquery.ScalarQueryParameter("last_session", "DATE", last_session),
+        bigquery.ScalarQueryParameter("highest_high", "FLOAT", highest_high),
+        bigquery.ScalarQueryParameter("stop_price", "FLOAT", stop_price),
+        bigquery.ScalarQueryParameter("atr", "FLOAT", atr),
+        bigquery.ScalarQueryParameter("breached", "BOOL", breached),
+        bigquery.ScalarQueryParameter("source_name", "STRING", source),
+    ])
+    client.query(query, job_config=config).result()

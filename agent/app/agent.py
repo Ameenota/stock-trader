@@ -14,6 +14,7 @@
 # limitations under the License.
 
 import os
+from datetime import datetime, timezone
 
 from google.adk.agents import Agent, BaseAgent, LoopAgent
 from google.adk.apps import App
@@ -138,6 +139,9 @@ Recent Trade History:
 Today's Watch List & Weekly Metrics:
 {ranked_portfolio}
 
+Deterministic Downside-Risk State (Python-authoritative):
+{risk_context}
+
 Advisor Critique from Previous Iteration:
 {advisor_critique}
 
@@ -162,6 +166,9 @@ Starting Portfolio State:
 - Current Cash: ${current_cash} ({current_cash_pct}% of total equity)
 - Current Holdings (with days_held): {current_holdings}
 - Active Watchlist (with EWMA Sentiment, Drawdown, and Volatility): {watchlist_data}
+
+Deterministic Downside-Risk State (Python-authoritative):
+{risk_context}
 
 Analyst's Draft Proposal:
 {analyst_proposal}
@@ -255,6 +262,111 @@ portfolio_stabilizer_loop = LoopAgent(
     max_iterations=5,
 )
 
+
+def _calculate_downside_risk(holdings: list[dict], *, account_number: str, dataset_id: str, now: datetime):
+    """Fetch risk inputs through adapters and return fail-closed deterministic state."""
+    from app.risk_controls import calculate_spy_regime, calculate_trailing_stop
+    from app.tools.bigquery_service import get_last_buy_timestamp, upsert_position_risk_state
+    from app.tools.data_ingestion import fetch_completed_daily_history
+    from app.trading_policy import RiskOverride
+
+    try:
+        spy_bars = fetch_completed_daily_history("SPY", now=now, calendar_days=420)
+        spy_regime = calculate_spy_regime(spy_bars, observed_at=now)
+    except Exception:
+        spy_regime = None
+    overrides = {}
+    stop_results = {}
+    reviewed_entries = {
+        "SNDK": (datetime(2026, 7, 1, tzinfo=timezone.utc), 0.01376, "HUMAN_CONFIRMED_ROBINHOOD_HISTORY"),
+        "MRVL": (datetime(2026, 6, 29, tzinfo=timezone.utc), 0.105127, "HUMAN_CONFIRMED_ROBINHOOD_HISTORY"),
+    }
+    for holding in holdings:
+        ticker = holding["symbol"]
+        entry_timestamp = get_last_buy_timestamp(ticker, dry_run=False, dataset_id=dataset_id)
+        source = "CONFIRMED_LIVE_TRADE_HISTORY"
+        if entry_timestamp is None and ticker in reviewed_entries:
+            reviewed_timestamp, reviewed_quantity, reviewed_source = reviewed_entries[ticker]
+            if abs(float(holding["shares"]) - reviewed_quantity) <= 1e-6:
+                entry_timestamp = reviewed_timestamp
+                source = reviewed_source
+        if entry_timestamp is None and ticker == "MU":
+            entry_timestamp = now
+            source = "BOOTSTRAPPED_CURRENT_DATE"
+        stop_result = None
+        if entry_timestamp is not None:
+            if entry_timestamp.tzinfo is None:
+                entry_timestamp = entry_timestamp.replace(tzinfo=timezone.utc)
+            try:
+                history_days = max(60, (now - entry_timestamp).days + 60)
+                ticker_bars = fetch_completed_daily_history(ticker, now=now, calendar_days=history_days)
+                stop_result = calculate_trailing_stop(ticker, ticker_bars, entry_date=entry_timestamp.date())
+            except Exception:
+                stop_result = None
+            if stop_result and stop_result.available:
+                try:
+                    upsert_position_risk_state(
+                        account_suffix=str(account_number)[-5:],
+                        ticker=ticker,
+                        entry_timestamp=entry_timestamp,
+                        last_session=stop_result.as_of_session,
+                        highest_high=stop_result.highest_high,
+                        stop_price=stop_result.current_stop,
+                        atr=stop_result.atr,
+                        breached=stop_result.breached,
+                        source=source,
+                        dataset_id=dataset_id,
+                    )
+                except Exception:
+                    # Persistence failure must not erase an already-calculated breach.
+                    pass
+        stop_results[ticker] = stop_result
+        overrides[ticker] = RiskOverride(
+            ticker=ticker,
+            stop_breached=bool(stop_result and stop_result.breached),
+            macro_risk_off=bool(spy_regime and spy_regime.available and spy_regime.macro_risk_off),
+            reason=";".join(filter(None, [
+                stop_result.reason if stop_result else "RISK_DATA_UNAVAILABLE",
+                spy_regime.reason if spy_regime else "RISK_DATA_UNAVAILABLE",
+            ])),
+            stop_data_available=bool(stop_result and stop_result.available),
+            macro_data_available=bool(spy_regime and spy_regime.available),
+        )
+    return overrides, stop_results, spy_regime
+
+
+def _risk_required_proposal(holdings: list[dict], total_equity: float, overrides: dict, spy_regime):
+    """Return a deterministic sell-only risk target, or None when debate may proceed."""
+    macro_risk_off = bool(spy_regime and spy_regime.available and spy_regime.macro_risk_off)
+    breached = {ticker for ticker, override in overrides.items() if override.stop_breached}
+    if not macro_risk_off and not breached:
+        return None
+    allocations = []
+    decisions = []
+    for holding in holdings:
+        ticker = holding["symbol"]
+        current_weight = holding["equity"] / total_equity if total_equity > 0 else 0.0
+        must_exit = ticker in breached or (macro_risk_off and ticker != "TLT")
+        if not must_exit:
+            target = min(current_weight, 0.30) if ticker == "TLT" else current_weight
+            if target > 0:
+                allocations.append({"ticker": ticker, "weight_pct": target})
+        decisions.append({
+            "ticker": ticker,
+            "signal": "LIQUIDATE" if must_exit else "HOLD",
+            "thesis": "Deterministic downside-risk override." if must_exit else "Existing position retained by deterministic policy.",
+        })
+    # With no equity sells required, risk-off may establish the 30% TLT / 70% cash target.
+    if macro_risk_off and not holdings:
+        allocations = [{"ticker": "TLT", "weight_pct": 0.30}]
+        decisions.append({"ticker": "TLT", "signal": "STRONG BUY", "thesis": "Deterministic macro risk-off allocation."})
+    return {
+        "allocations": allocations,
+        "decisions": decisions,
+        "thesis": "Deterministic ATR/SPY risk override; no LLM safety interpretation is used.",
+        "summary": "Downside-risk controls produced a deterministic target.",
+    }
+
 async def financial_analysis_pipeline(
     ranked_portfolio: list, 
     graveyard_rows: list | None = None, 
@@ -286,7 +398,19 @@ async def financial_analysis_pipeline(
 
     # 2. Fetch current holdings and cash from Robinhood to initialize loop state
     print("\nFetching current portfolio state from Robinhood...")
-    total_cash, buying_power, holdings = await fetch_robinhood_portfolio_state(account_number)
+    broker_state = await fetch_robinhood_portfolio_state(account_number)
+    total_cash = broker_state.cash
+    buying_power = broker_state.buying_power
+    holdings = [
+        {
+            "symbol": holding.symbol,
+            "shares": holding.shares,
+            "average_buy_price": holding.average_buy_price,
+            "current_price": holding.current_price,
+            "equity": holding.equity,
+        }
+        for holding in broker_state.holdings
+    ]
 
     # Compute starting Total Equity and weights
     holdings_value = sum(h["equity"] for h in holdings)
@@ -319,6 +443,21 @@ async def financial_analysis_pipeline(
             "days_held": days_held
         })
     current_holdings_str = str(holdings_with_days)
+
+    risk_overrides, trailing_stops, spy_regime = _calculate_downside_risk(
+        holdings,
+        account_number=account_number,
+        dataset_id=dataset_id,
+        now=now,
+    )
+    risk_context = {
+        "spy_regime": spy_regime.__dict__ if spy_regime else {"available": False, "reason": "RISK_DATA_UNAVAILABLE"},
+        "trailing_stops": {
+            ticker: result.__dict__ if result else {"available": False, "reason": "RISK_DATA_UNAVAILABLE"}
+            for ticker, result in trailing_stops.items()
+        },
+    }
+    forced_proposal = _risk_required_proposal(holdings, total_equity, risk_overrides, spy_regime)
 
     # Fetch recent trades history
     recent_trades = get_recent_trades(limit=10, dry_run=is_dry_run, dataset_id=dataset_id)
@@ -365,8 +504,16 @@ async def financial_analysis_pipeline(
         "watchlist_data": watchlist_summary,
         "ranked_portfolio": str(ranked_portfolio),
         "weekly_metrics": str(weekly_metrics),
+        "risk_context": str(risk_context),
         "advisor_critique": "No previous critique. This is your first proposal."
     }
+    if forced_proposal is not None:
+        initial_state["analyst_proposal"] = forced_proposal
+        initial_state["advisor_critique"] = {
+            "approved": True,
+            "feedback": "Deterministic downside-risk override; debate bypassed.",
+            "suggested_allocations": None,
+        }
     session = await session_service.create_session(
         user_id="cron_job",
         app_name="trading",
@@ -375,11 +522,16 @@ async def financial_analysis_pipeline(
 
     runner = Runner(agent=portfolio_stabilizer_loop, session_service=session_service, app_name="trading")
 
-    async for event in runner.run_async(
+    async def no_events():
+        if False:
+            yield None
+
+    event_stream = no_events() if forced_proposal is not None else runner.run_async(
         new_message=types.Content(role="user", parts=[types.Part.from_text(text="Please start the debate loop to finalize today's target allocations.")]),
         user_id="cron_job",
         session_id=session.id,
-    ):
+    )
+    async for event in event_stream:
         if event.content and event.content.parts:
             content_str = "".join([part.text for part in event.content.parts if part.text]).strip()
             if content_str:
@@ -403,9 +555,11 @@ async def financial_analysis_pipeline(
                     print(f"{color}" + "#" * (len(author_name) + len(emoji) + 54) + f"{CLR_RESET}\n")
     print(f"\n{CLR_BOLD}{CLR_CYAN}🔄 [PHASE: 4. Exit (Multi-Agent Loop Finished)]{CLR_RESET}")
 
-    # Retrieve final approved target allocations from the latest session state
+    # Retrieve the final proposal and critique. The proposal is non-executable unless
+    # the final critique is explicitly approved and deterministic policy also passes.
     session = await session_service.get_session(user_id="cron_job", session_id=session.id, app_name="trading")
     proposal = session.state.get("analyst_proposal")
+    critique = session.state.get("advisor_critique")
     if not proposal:
         print(f"\n{CLR_BOLD}{CLR_RED}[CRITICAL ERROR] Failed to obtain approved portfolio target allocations from the loop agent.{CLR_RESET}")
         return ranked_portfolio
@@ -437,15 +591,37 @@ async def financial_analysis_pipeline(
             })
         decisions = getattr(proposal, "decisions", [])
 
-    print(f"\n{CLR_BOLD}{CLR_GREEN}Approved target allocations: {approved_allocations}{CLR_RESET}")
+    critique_approved = critique.get("approved") if isinstance(critique, dict) else getattr(critique, "approved", None)
+    if critique_approved is not True:
+        print(f"\n{CLR_BOLD}{CLR_RED}[POLICY REJECTED] Final advisor approval is missing or false; broker execution cancelled.{CLR_RESET}")
+        from app.tools.bigquery_service import insert_execution_run
+        from app.trading_policy import POLICY_VERSION
+        from zoneinfo import ZoneInfo
 
+        rejected_decision_id = f"{now.astimezone(ZoneInfo('America/New_York')).date().isoformat()}-close-{str(account_number)[-5:]}-{POLICY_VERSION}"
+        try:
+            insert_execution_run(
+                decision_id=rejected_decision_id,
+                dry_run=is_dry_run,
+                policy_version=POLICY_VERSION,
+                policy_allowed=False,
+                status="POLICY_REJECTED",
+                violations=[{"code": "ADVISOR_NOT_APPROVED"}],
+                proposal=approved_allocations,
+                dataset_id=dataset_id,
+            )
+        except Exception as exc:
+            print(f"{CLR_YELLOW}Warning: Failed to audit rejected execution run: {exc}{CLR_RESET}")
+        return ranked_portfolio
+
+    print(f"\n{CLR_BOLD}{CLR_GREEN}Advisor-approved target allocations: {approved_allocations}{CLR_RESET}")
+
+    dry_run_report_path = None
     if is_dry_run:
         import json
         from datetime import datetime
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         dry_run_filename = f"dry_run_results_{timestamp}.json"
-        critique = session.state.get("advisor_critique")
-        
         proposal_dict = {}
         if proposal:
             if isinstance(proposal, dict):
@@ -486,13 +662,15 @@ async def financial_analysis_pipeline(
             logs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "logs")
             os.makedirs(logs_dir, exist_ok=True)
             filepath = os.path.join(logs_dir, dry_run_filename)
+            dry_run_report_path = filepath
             with open(filepath, "w") as f:
                 json.dump(dry_run_data, f, indent=2)
             print(f"   {CLR_GREEN}[DRY_RUN] Successfully dumped dry run results to {filepath}{CLR_RESET}")
         except Exception as e:
             print(f"   {CLR_YELLOW}Warning: Failed to dump dry run results: {e}{CLR_RESET}")
 
-    # Map decisions (signal/thesis) and target weight allocations back to ranked_portfolio
+    # Map decisions for policy metrics, then perform deterministic authorization before
+    # changing executable target weights or constructing a broker executor.
     decision_map = {}
     for d in decisions:
         if isinstance(d, dict):
@@ -506,7 +684,117 @@ async def financial_analysis_pipeline(
         if ticker:
             decision_map[ticker] = {"signal": signal, "thesis": thesis}
 
-    allocation_map = {a["ticker"].strip().upper(): a["weight_pct"] for a in approved_allocations}
+    from app.trading_policy import AssetPolicyMetrics, HoldingState, POLICY_VERSION, RiskOverride, validate_pretrade_plan
+    from app.tools.bigquery_service import execution_run_exists, insert_execution_run, update_execution_run
+    from app.tools.ticker_universe import get_allowed_tickers
+    from zoneinfo import ZoneInfo
+
+    market_date = now.astimezone(ZoneInfo("America/New_York")).date().isoformat()
+    decision_id = f"{market_date}-close-{str(account_number)[-5:]}-{POLICY_VERSION}"
+    try:
+        already_executed = execution_run_exists(decision_id, is_dry_run, dataset_id)
+    except Exception as exc:
+        print(f"{CLR_RED}[POLICY REJECTED] Duplicate-run protection unavailable: {exc}{CLR_RESET}")
+        return ranked_portfolio
+
+    holding_policy = [
+        HoldingState(
+            ticker=holding["symbol"],
+            shares=holding["shares"],
+            price=holding["current_price"],
+            equity=holding["equity"],
+            weight=holding["equity"] / total_equity,
+            days_held=next(item["days_held"] for item in holdings_with_days if item["symbol"] == holding["symbol"]),
+        )
+        for holding in holdings
+    ]
+    metric_rows = {str(item.get("ticker", "")).strip().upper(): item for item in ranked_portfolio}
+    policy_tickers = {str(a.get("ticker", "")).strip().upper() for a in approved_allocations} | {h.ticker for h in holding_policy}
+    metrics_by_ticker = {}
+    for ticker in policy_tickers:
+        item = metric_rows.get(ticker)
+        if not item:
+            continue
+        try:
+            observed_at = now
+            if item.get("timestamp"):
+                observed_at = datetime.fromisoformat(str(item["timestamp"]).replace("Z", "+00:00"))
+                if observed_at.tzinfo is None:
+                    observed_at = observed_at.replace(tzinfo=timezone.utc)
+            metrics_by_ticker[ticker] = AssetPolicyMetrics(
+                ticker=ticker,
+                observed_at=observed_at,
+                sentiment_ewma=item.get("sentiment_ewma"),
+                sentiment_volatility=item.get("sentiment_volatility"),
+                drawdown_pct=item.get("drawdown_pct"),
+                forward_pe=item.get("forward_pe"),
+                is_20d_high=item.get("is_20d_high") is True,
+                macd_bullish_cross=item.get("macd_bullish_cross") is True,
+                final_signal=decision_map.get(ticker, {}).get("signal", item.get("signal", "")),
+            )
+        except (TypeError, ValueError):
+            continue
+    overrides_by_ticker = {}
+    for ticker in policy_tickers:
+        overrides_by_ticker[ticker] = risk_overrides.get(ticker) or RiskOverride(
+            ticker,
+            False,
+            bool(spy_regime and spy_regime.available and spy_regime.macro_risk_off),
+            spy_regime.reason if spy_regime else "RISK_DATA_UNAVAILABLE",
+            stop_data_available=ticker not in {holding.ticker for holding in holding_policy},
+            macro_data_available=bool(spy_regime and spy_regime.available),
+        )
+    policy_decision = validate_pretrade_plan(
+        advisor_approved=critique_approved,
+        decision_id=decision_id,
+        account_number=account_number,
+        allocations=approved_allocations,
+        holdings=holding_policy,
+        metrics_by_ticker=metrics_by_ticker,
+        overrides_by_ticker=overrides_by_ticker,
+        total_equity=total_equity,
+        allowed_tickers=set(get_allowed_tickers()),
+        already_executed=already_executed,
+        now=now,
+    )
+    if dry_run_report_path:
+        try:
+            with open(dry_run_report_path) as report_file:
+                dry_run_report = json.load(report_file)
+            dry_run_report["policy_result"] = {
+                "allowed": policy_decision.allowed,
+                "decision_id": policy_decision.decision_id,
+                "reason_codes": list(policy_decision.reason_codes),
+                "planned_trades": [
+                    {
+                        "ticker": trade.ticker,
+                        "action": trade.action.value,
+                        "current_weight": trade.current_weight,
+                        "target_weight": trade.target_weight,
+                        "reason_codes": list(trade.reason_codes),
+                    }
+                    for trade in policy_decision.planned_trades
+                ],
+            }
+            with open(dry_run_report_path, "w") as report_file:
+                json.dump(dry_run_report, report_file, indent=2)
+        except Exception as exc:
+            print(f"{CLR_YELLOW}Warning: Failed to append policy result to dry-run report: {exc}{CLR_RESET}")
+    insert_execution_run(
+        decision_id=decision_id,
+        dry_run=is_dry_run,
+        policy_version=POLICY_VERSION,
+        policy_allowed=policy_decision.allowed,
+        status="VALIDATED" if policy_decision.allowed else "POLICY_REJECTED",
+        violations=[violation.__dict__ for violation in policy_decision.violations],
+        proposal=approved_allocations,
+        dataset_id=dataset_id,
+    )
+    if not policy_decision.allowed or policy_decision.plan is None:
+        print(f"{CLR_RED}[POLICY REJECTED] {policy_decision.reason_codes}{CLR_RESET}")
+        return ranked_portfolio
+
+    allocation_map = dict(policy_decision.normalized_allocations)
 
     for item in ranked_portfolio:
         ticker = item["ticker"].strip().upper()
@@ -519,7 +807,35 @@ async def financial_analysis_pipeline(
     print(f"\n{CLR_BOLD}{CLR_GREEN}💸 [PHASE: 5. Execution & Portfolio Rebalancing]{CLR_RESET}")
     print(f"   Connecting to Robinhood MCP tools for target account ending in 48661...")
     controller = BrokerExecutor(toolset=robinhood_toolset, account_number=account_number, dataset_id=dataset_id)
-    execution_result = await controller.execute_rebalance(approved_allocations=approved_allocations)
+    update_execution_run(decision_id, is_dry_run, "EXECUTING", dataset_id=dataset_id)
+    try:
+        execution_result = await controller.execute_rebalance(policy_decision.plan)
+    except Exception as exc:
+        update_execution_run(
+            decision_id,
+            is_dry_run,
+            "ABORTED",
+            execution_result={"error": str(exc)},
+            dataset_id=dataset_id,
+        )
+        try:
+            from app.app_utils.discord_notifier import send_discord_webhook
+            send_discord_webhook(
+                summary=f"🚨 TRADING RUN FAILED CLOSED: {exc}",
+                approved_allocations=approved_allocations,
+                decisions=decisions,
+                is_dry_run=is_dry_run,
+            )
+        except Exception as notify_exc:
+            print(f"{CLR_YELLOW}Warning: Failed to send critical Discord notification: {notify_exc}{CLR_RESET}")
+        return ranked_portfolio
+    update_execution_run(
+        decision_id,
+        is_dry_run,
+        execution_result.status.value,
+        execution_result=execution_result.__dict__,
+        dataset_id=dataset_id,
+    )
     print(f"{CLR_BOLD}{CLR_GREEN}💸 [PHASE: 5. Exit]{CLR_RESET}")
 
     # 5. Log post-trade portfolio snapshot to BigQuery
@@ -564,6 +880,11 @@ async def financial_analysis_pipeline(
                 summary_str = proposal.get("summary")
             else:
                 summary_str = getattr(proposal, "summary", None)
+        if execution_result.status.value != "COMPLETED":
+            summary_str = (
+                f"🚨 TRADING RUN FAILED CLOSED: {execution_result.status.value}. "
+                f"{execution_result.reason or 'See execution audit for details.'}"
+            )
         send_discord_webhook(
             summary=summary_str or "Daily portfolio optimization complete.",
             approved_allocations=approved_allocations,
