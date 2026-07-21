@@ -1,6 +1,6 @@
 import math
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -14,7 +14,12 @@ from app.tools.robinhood_service import (
     QuoteValidationError,
     parse_quotes,
 )
-from app.trading_policy import AssetPolicyMetrics, RiskOverride, validate_pretrade_plan
+from app.trading_policy import (
+    AssetPolicyMetrics,
+    RiskOverride,
+    ValidatedExecutionPlan,
+    validate_pretrade_plan,
+)
 
 
 def tool(name, response=None, side_effect=None):
@@ -145,6 +150,27 @@ async def test_raw_allocations_fail_before_tools():
     executor = BrokerExecutor(toolset, "MOCK_ACCOUNT_48661")
     with pytest.raises(TypeError):
         await executor.execute_rebalance([{"ticker": "NVDA", "weight_pct": 0.3}])
+    toolset.get_tools.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_forged_paper_plan_fails_before_tools():
+    toolset = make_toolset()
+    now = datetime.now(UTC)
+    paper_plan = ValidatedExecutionPlan._create(
+        decision_id="paper-forgery",
+        account_number="MOCK_ACCOUNT_48661",
+        created_at=now,
+        expires_at=now + timedelta(minutes=5),
+        allocations={},
+        planned_trades=(),
+        account_id="paper-one",
+        execution_mode="PAPER",
+    )
+    with pytest.raises(ValueError, match="Paper execution plans"):
+        await BrokerExecutor(toolset, "MOCK_ACCOUNT_48661").execute_rebalance(
+            paper_plan
+        )
     toolset.get_tools.assert_not_awaited()
 
 

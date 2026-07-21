@@ -47,7 +47,7 @@ def test_setup_bigquery(mock_bq_client):
     assert created_dataset.location == "US"
 
     # Assert all required tables were created.
-    assert mock_bq_client.create_table.call_count == 5
+    assert mock_bq_client.create_table.call_count == 6
     
     # Verify first table (infrastructure_market_metrics)
     sentiment_table = mock_bq_client.create_table.call_args_list[0][0][0]
@@ -129,6 +129,11 @@ def test_setup_bigquery(mock_bq_client):
         "decision_id", "created_at", "updated_at", "dry_run", "policy_version", "policy_allowed", "status"
     ]
     assert mock_bq_client.create_table.call_args_list[4][0][0].table_id == "position_risk_state"
+    accounts_table = mock_bq_client.create_table.call_args_list[5][0][0]
+    assert accounts_table.table_id == "accounts"
+    assert [field.name for field in accounts_table.schema[:4]] == [
+        "account_id", "display_name", "account_type", "status"
+    ]
 
 
 def test_insert_sentiment(mock_bq_client):
@@ -199,7 +204,11 @@ def test_insert_sentiment(mock_bq_client):
             "target_weight": 0.30,
             "is_20d_high": None,
             "macd_bullish_cross": None,
-            "forward_pe": None
+                "forward_pe": None,
+                "record_scope": "MARKET_INPUT",
+                "account_id": None,
+                "decision_id": None,
+                "market_batch_id": None,
         },
         {
             "ticker": "SMCI",
@@ -224,7 +233,11 @@ def test_insert_sentiment(mock_bq_client):
             "target_weight": None,
             "is_20d_high": None,
             "macd_bullish_cross": None,
-            "forward_pe": None
+                "forward_pe": None,
+                "record_scope": "MARKET_INPUT",
+                "account_id": None,
+                "decision_id": None,
+                "market_batch_id": None,
         }
     ]
 

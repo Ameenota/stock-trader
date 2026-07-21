@@ -23,6 +23,8 @@ class TrailingStopResult:
     highest_high: float | None
     breached: bool
     reason: str
+    confirmation_count: int = 0
+    state: str = "ACTIVE"
 
 
 @dataclass(frozen=True)
@@ -105,7 +107,11 @@ def calculate_trailing_stop(
     entry_date: date,
     period: int = 14,
     multiplier: float = 3.0,
+    confirmation_closes: int = 1,
+    cancel_pending_exit_on_recovery: bool = False,
 ) -> TrailingStopResult:
+    if not 1 <= confirmation_closes <= 5:
+        raise ValueError("confirmation_closes must be between 1 and 5")
     atr_values = wilder_atr(bars, period)
     eligible = [
         index
@@ -129,6 +135,8 @@ def calculate_trailing_stop(
     previous_stop: float | None = None
     highest_high: float | None = None
     breached = False
+    confirmation_count = 0
+    state = "ACTIVE"
     last_session: date | None = None
     last_atr: float | None = None
     for session in eligible:
@@ -137,8 +145,17 @@ def calculate_trailing_stop(
         close = float(row.Close)
         high = float(row.High)
         previous_stop = stop
-        if previous_stop is not None and close < previous_stop:
-            breached = True
+        if not breached and previous_stop is not None:
+            if close < previous_stop:
+                confirmation_count += 1
+                if confirmation_count >= confirmation_closes:
+                    breached = True
+                    state = "EXIT_CONFIRMED"
+                else:
+                    state = "EXIT_PENDING"
+            elif confirmation_count and cancel_pending_exit_on_recovery:
+                confirmation_count = 0
+                state = "ACTIVE"
         candidate = high - multiplier * atr
         stop = candidate if stop is None else max(stop, candidate)
         highest_high = high if highest_high is None else max(highest_high, high)
@@ -153,7 +170,15 @@ def calculate_trailing_stop(
         stop,
         highest_high,
         breached,
-        "ATR_STOP_BREACH" if breached else "ATR_STOP_ACTIVE",
+        (
+            "ATR_STOP_BREACH"
+            if breached
+            else "ATR_STOP_PENDING"
+            if state == "EXIT_PENDING"
+            else "ATR_STOP_ACTIVE"
+        ),
+        confirmation_count,
+        state,
     )
 
 

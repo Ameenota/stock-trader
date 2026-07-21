@@ -66,6 +66,31 @@ client = get_bq_client()
 project = client.project
 dataset_id = "portfolio_analytics"
 
+
+@st.cache_data(ttl=3600)
+def load_dashboard_account_id() -> str:
+    rows = list(
+        client.query(
+            f"""
+            SELECT account_id FROM `{project}.{dataset_id}.accounts`
+            WHERE account_type='REAL' AND status='ACTIVE'
+              AND is_dashboard_default=TRUE
+            """
+        ).result()
+    )
+    if len(rows) != 1:
+        raise RuntimeError(
+            "Expected exactly one active default real account; refusing a global fallback"
+        )
+    return rows[0].account_id
+
+
+try:
+    dashboard_account_id = load_dashboard_account_id()
+except Exception as exc:
+    st.error(f"Dashboard account configuration error: {exc}")
+    st.stop()
+
 # 3. Data Querying Helpers
 @st.cache_data(ttl=3600)
 def load_latest_snapshot() -> dict:
@@ -73,11 +98,17 @@ def load_latest_snapshot() -> dict:
     query = f"""
         SELECT timestamp, account_number, total_equity, total_cash, buying_power, unrealized_gain_loss, unrealized_gain_loss_percent, holdings, summary
         FROM `{project}.{dataset_id}.portfolio_snapshot`
+        WHERE account_id = @account_id
         ORDER BY timestamp DESC
         LIMIT 1
     """
     try:
-        query_job = client.query(query)
+        query_job = client.query(
+            query,
+            job_config=bigquery.QueryJobConfig(query_parameters=[
+                bigquery.ScalarQueryParameter("account_id", "STRING", dashboard_account_id)
+            ]),
+        )
         results = list(query_job.result())
         if results:
             row = results[0]
@@ -119,13 +150,18 @@ def load_latest_recommendations() -> pd.DataFrame:
         WHERE timestamp = (
             SELECT MAX(timestamp) 
             FROM `{project}.{dataset_id}.infrastructure_market_metrics`
+            WHERE account_id = @account_id AND record_scope='ACCOUNT_DECISION'
         )
+        AND account_id = @account_id
+        AND record_scope='ACCOUNT_DECISION'
         AND timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
         AND signal != 'FILTERED'
         ORDER BY relative_rank DESC
     """
     try:
-        df = client.query(query).to_dataframe()
+        df = client.query(query, job_config=bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ScalarQueryParameter("account_id", "STRING", dashboard_account_id)
+        ])).to_dataframe()
         return df
     except Exception as e:
         st.error(f"Error loading recommendations: {e}")
@@ -140,13 +176,18 @@ def load_latest_graveyard() -> pd.DataFrame:
         WHERE timestamp = (
             SELECT MAX(timestamp) 
             FROM `{project}.{dataset_id}.infrastructure_market_metrics`
+            WHERE account_id = @account_id AND record_scope='ACCOUNT_DECISION'
         )
+        AND account_id = @account_id
+        AND record_scope='ACCOUNT_DECISION'
         AND timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
         AND signal = 'FILTERED'
         ORDER BY ticker ASC
     """
     try:
-        df = client.query(query).to_dataframe()
+        df = client.query(query, job_config=bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ScalarQueryParameter("account_id", "STRING", dashboard_account_id)
+        ])).to_dataframe()
         return df
     except Exception as e:
         st.error(f"Error loading graveyard: {e}")
@@ -161,7 +202,9 @@ def load_latest_news_headlines() -> list:
         WHERE timestamp = (
             SELECT MAX(timestamp) 
             FROM `{project}.{dataset_id}.infrastructure_market_metrics`
+            WHERE record_scope IN ('MARKET_INPUT', 'LEGACY_COMBINED')
         )
+        AND record_scope IN ('MARKET_INPUT', 'LEGACY_COMBINED')
         AND timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
         AND signal != 'FILTERED'
         AND raw_news IS NOT NULL
@@ -191,10 +234,13 @@ def load_trade_history() -> pd.DataFrame:
     query = f"""
         SELECT timestamp, ticker, action, amount_usd, reasoning, COALESCE(dry_run, TRUE) as dry_run
         FROM `{project}.{dataset_id}.trade_history`
+        WHERE account_id = @account_id
         ORDER BY timestamp DESC
     """
     try:
-        df = client.query(query).to_dataframe()
+        df = client.query(query, job_config=bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ScalarQueryParameter("account_id", "STRING", dashboard_account_id)
+        ])).to_dataframe()
         return df
     except Exception as e:
         st.error(f"Error loading trade history: {e}")
@@ -206,11 +252,14 @@ def load_portfolio_history() -> pd.DataFrame:
     query = f"""
         SELECT DATE(timestamp) as date, total_equity
         FROM `{project}.{dataset_id}.portfolio_snapshot`
+        WHERE account_id = @account_id
         QUALIFY ROW_NUMBER() OVER(PARTITION BY DATE(timestamp) ORDER BY timestamp DESC) = 1
         ORDER BY date ASC
     """
     try:
-        df = client.query(query).to_dataframe()
+        df = client.query(query, job_config=bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ScalarQueryParameter("account_id", "STRING", dashboard_account_id)
+        ])).to_dataframe()
         # Ensure the date column is parsed correctly as date objects
         if not df.empty:
             df['date'] = pd.to_datetime(df['date']).dt.date

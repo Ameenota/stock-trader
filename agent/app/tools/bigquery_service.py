@@ -15,9 +15,12 @@
 from datetime import datetime, timezone
 import json
 import time
+import uuid
 from typing import List, Dict, Any
 from google.cloud import bigquery
 from google.api_core.exceptions import Conflict
+
+from app.accounts import AtrPolicyConfig, TradingAccount, policy_config_hash
 
 def get_bigquery_client() -> bigquery.Client:
     """Initializes the BigQuery client using Application Default Credentials (ADC)."""
@@ -69,6 +72,10 @@ def setup_bigquery(dataset_id: str = "portfolio_analytics") -> None:
         bigquery.SchemaField("is_20d_high", "BOOLEAN", mode="NULLABLE"),
         bigquery.SchemaField("macd_bullish_cross", "BOOLEAN", mode="NULLABLE"),
         bigquery.SchemaField("forward_pe", "FLOAT", mode="NULLABLE"),
+        bigquery.SchemaField("record_scope", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("account_id", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("decision_id", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("market_batch_id", "STRING", mode="NULLABLE"),
     ]
     sentiment_table = bigquery.Table(sentiment_table_id, schema=sentiment_schema)
     try:
@@ -95,6 +102,13 @@ def setup_bigquery(dataset_id: str = "portfolio_analytics") -> None:
         bigquery.SchemaField("order_status", "STRING", mode="NULLABLE"),
         bigquery.SchemaField("requested_quantity", "FLOAT", mode="NULLABLE"),
         bigquery.SchemaField("filled_quantity", "FLOAT", mode="NULLABLE"),
+        bigquery.SchemaField("account_id", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("trade_id", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("execution_mode", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("fill_price", "FLOAT", mode="NULLABLE"),
+        bigquery.SchemaField("fees_usd", "FLOAT", mode="NULLABLE"),
+        bigquery.SchemaField("slippage_usd", "FLOAT", mode="NULLABLE"),
+        bigquery.SchemaField("market_batch_id", "STRING", mode="NULLABLE"),
     ]
     trade_table = bigquery.Table(trade_table_id, schema=trade_schema)
     try:
@@ -119,6 +133,12 @@ def setup_bigquery(dataset_id: str = "portfolio_analytics") -> None:
         bigquery.SchemaField("holdings", "STRING", mode="REQUIRED"),
         bigquery.SchemaField("buying_power", "FLOAT", mode="NULLABLE"),
         bigquery.SchemaField("summary", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("account_id", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("snapshot_id", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("snapshot_type", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("decision_id", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("market_batch_id", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("policy_config_hash", "STRING", mode="NULLABLE"),
     ]
     snapshot_table = bigquery.Table(snapshot_table_id, schema=snapshot_schema)
     try:
@@ -143,6 +163,17 @@ def setup_bigquery(dataset_id: str = "portfolio_analytics") -> None:
         bigquery.SchemaField("violations", "STRING", mode="NULLABLE"),
         bigquery.SchemaField("proposal", "STRING", mode="NULLABLE"),
         bigquery.SchemaField("execution_result", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("account_id", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("run_kind", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("market_date", "DATE", mode="NULLABLE"),
+        bigquery.SchemaField("execution_window", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("market_batch_id", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("execution_mode", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("requested_live", "BOOLEAN", mode="NULLABLE"),
+        bigquery.SchemaField("policy_name", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("policy_config", "JSON", mode="NULLABLE"),
+        bigquery.SchemaField("policy_config_hash", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("claim_token", "STRING", mode="NULLABLE"),
     ]
     execution_table = bigquery.Table(execution_table_id, schema=execution_schema)
     try:
@@ -167,6 +198,12 @@ def setup_bigquery(dataset_id: str = "portfolio_analytics") -> None:
         bigquery.SchemaField("breached", "BOOLEAN", mode="REQUIRED"),
         bigquery.SchemaField("updated_at", "TIMESTAMP", mode="REQUIRED"),
         bigquery.SchemaField("source", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("account_id", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("position_id", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("confirmation_count", "INTEGER", mode="NULLABLE"),
+        bigquery.SchemaField("stop_state", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("policy_config_hash", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("position_closed_at", "TIMESTAMP", mode="NULLABLE"),
     ]
     risk_table = bigquery.Table(risk_table_id, schema=risk_schema)
     try:
@@ -178,6 +215,37 @@ def setup_bigquery(dataset_id: str = "portfolio_analytics") -> None:
             client.update_table(existing_table, ["schema"])
     except Exception:
         client.create_table(risk_table, exists_ok=True)
+
+    accounts_table_id = f"{project}.{dataset_id}.accounts"
+    accounts_schema = [
+        bigquery.SchemaField("account_id", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("display_name", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("account_type", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("status", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("is_dashboard_default", "BOOLEAN", mode="REQUIRED"),
+        bigquery.SchemaField("broker_provider", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("broker_account_ref", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("broker_account_suffix", "STRING", mode="NULLABLE"),
+        bigquery.SchemaField("live_execution_allowed", "BOOLEAN", mode="REQUIRED"),
+        bigquery.SchemaField("initial_cash", "FLOAT", mode="REQUIRED"),
+        bigquery.SchemaField("base_currency", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("policy_name", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("policy_version", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("policy_config", "JSON", mode="REQUIRED"),
+        bigquery.SchemaField("policy_config_hash", "STRING", mode="REQUIRED"),
+        bigquery.SchemaField("created_at", "TIMESTAMP", mode="REQUIRED"),
+        bigquery.SchemaField("updated_at", "TIMESTAMP", mode="REQUIRED"),
+    ]
+    accounts_table = bigquery.Table(accounts_table_id, schema=accounts_schema)
+    try:
+        existing_table = client.get_table(accounts_table_id)
+        existing_fields = {field.name for field in existing_table.schema}
+        fields_to_add = [field for field in accounts_schema if field.name not in existing_fields]
+        if fields_to_add:
+            existing_table.schema = list(existing_table.schema) + fields_to_add
+            client.update_table(existing_table, ["schema"])
+    except Exception:
+        client.create_table(accounts_table, exists_ok=True)
 
 
 def _sanitize_string(s: str | None) -> str | None:
@@ -296,7 +364,13 @@ def insert_sentiment(
             "target_weight": target_weight_val,
             "is_20d_high": is_20d_high_val,
             "macd_bullish_cross": macd_bullish_cross_val,
-            "forward_pe": forward_pe_val
+            "forward_pe": forward_pe_val,
+            "record_scope": item.get("record_scope") or (
+                "ACCOUNT_DECISION" if item.get("account_id") else "MARKET_INPUT"
+            ),
+            "account_id": item.get("account_id"),
+            "decision_id": item.get("decision_id"),
+            "market_batch_id": item.get("market_batch_id"),
         })
         
     try:
@@ -383,6 +457,13 @@ def insert_trade_record(
     order_status: str | None = None,
     requested_quantity: float | None = None,
     filled_quantity: float | None = None,
+    account_id: str | None = None,
+    trade_id: str | None = None,
+    execution_mode: str | None = None,
+    fill_price: float | None = None,
+    fees_usd: float | None = None,
+    slippage_usd: float | None = None,
+    market_batch_id: str | None = None,
 ) -> None:
     """Inserts a trade receipt (ticker, action, amount_usd, timestamp, reasoning, dry_run) into the trade_history table.
 
@@ -421,6 +502,13 @@ def insert_trade_record(
         "order_status": order_status,
         "requested_quantity": requested_quantity,
         "filled_quantity": filled_quantity,
+        "account_id": account_id,
+        "trade_id": trade_id,
+        "execution_mode": execution_mode,
+        "fill_price": fill_price,
+        "fees_usd": fees_usd,
+        "slippage_usd": slippage_usd,
+        "market_batch_id": market_batch_id,
     }
     row_to_insert.update({key: value for key, value in optional_fields.items() if value is not None})
     
@@ -461,6 +549,12 @@ def insert_portfolio_snapshot(
         "buying_power": float(snapshot["buying_power"]) if snapshot.get("buying_power") is not None else None,
         "summary": _sanitize_string(snapshot.get("summary"))
     }
+    for key in (
+        "account_id", "snapshot_id", "snapshot_type", "decision_id",
+        "market_batch_id", "policy_config_hash",
+    ):
+        if snapshot.get(key) is not None:
+            row_to_insert[key] = snapshot[key]
 
     try:
         job_config = bigquery.LoadJobConfig(
@@ -492,6 +586,7 @@ def get_historical_metrics(
         SELECT ticker, raw_score, thesis, relative_rank, signal, timestamp, analyst_consensus, target_price, current_price, moving_average_20d, price_to_ma_ratio, rsi, macd, macd_signal, drawdown_pct, sustained_rsi_drop, sentiment_ewma, sentiment_volatility, target_weight, is_20d_high, macd_bullish_cross, forward_pe
         FROM `{table_id}`
         WHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @days DAY)
+          AND (record_scope IS NULL OR record_scope IN ('MARKET_INPUT', 'LEGACY_COMBINED'))
           AND signal != 'FILTERED'
           AND ticker != 'SPY'
         ORDER BY ticker, timestamp ASC
@@ -562,7 +657,9 @@ def get_latest_market_metrics(
             SELECT MAX(timestamp) 
             FROM `{table_id}` 
             WHERE DATE(timestamp) = @target_date
+              AND (record_scope IS NULL OR record_scope IN ('MARKET_INPUT', 'LEGACY_COMBINED'))
         )
+          AND (record_scope IS NULL OR record_scope IN ('MARKET_INPUT', 'LEGACY_COMBINED'))
         ORDER BY relative_rank DESC
     """
     
@@ -610,7 +707,10 @@ def get_latest_market_metrics(
     return metrics
 
 
-def get_latest_portfolio_holdings(dataset_id: str = "portfolio_analytics") -> List[str]:
+def get_latest_portfolio_holdings(
+    dataset_id: str = "portfolio_analytics",
+    account_id: str = "real-48661",
+) -> List[str]:
     """Queries BigQuery and returns the list of stock symbols currently owned.
 
     Queries the most recent portfolio snapshot and parses the holdings JSON.
@@ -622,11 +722,17 @@ def get_latest_portfolio_holdings(dataset_id: str = "portfolio_analytics") -> Li
     query = f"""
         SELECT holdings
         FROM `{table_id}`
+        WHERE account_id=@account_id
         ORDER BY timestamp DESC
         LIMIT 1
     """
     try:
-        query_job = client.query(query)
+        query_job = client.query(
+            query,
+            job_config=bigquery.QueryJobConfig(query_parameters=[
+                bigquery.ScalarQueryParameter("account_id", "STRING", account_id)
+            ]),
+        )
         results = list(query_job.result())
         if results:
             row = results[0]
@@ -644,7 +750,8 @@ def get_latest_portfolio_holdings(dataset_id: str = "portfolio_analytics") -> Li
 def get_recent_trades(
     limit: int = 10,
     dry_run: bool = True,
-    dataset_id: str = "portfolio_analytics"
+    dataset_id: str = "portfolio_analytics",
+    account_id: str | None = None,
 ) -> List[Dict[str, Any]]:
     """Queries BigQuery and returns the most recent trades for the given execution mode."""
     client = get_bigquery_client()
@@ -654,6 +761,7 @@ def get_recent_trades(
         SELECT ticker, action, amount_usd, timestamp, reasoning
         FROM `{table_id}`
         WHERE dry_run = @dry_run
+          AND (@account_id IS NULL OR account_id = @account_id)
         ORDER BY timestamp DESC
         LIMIT @limit
     """
@@ -662,6 +770,7 @@ def get_recent_trades(
         query_parameters=[
             bigquery.ScalarQueryParameter("dry_run", "BOOL", dry_run),
             bigquery.ScalarQueryParameter("limit", "INT64", limit)
+            ,bigquery.ScalarQueryParameter("account_id", "STRING", account_id)
         ]
     )
     try:
@@ -684,7 +793,8 @@ def get_recent_trades(
 def get_last_buy_timestamp(
     ticker: str,
     dry_run: bool = True,
-    dataset_id: str = "portfolio_analytics"
+    dataset_id: str = "portfolio_analytics",
+    account_id: str | None = None,
 ) -> datetime | None:
     """Queries the timestamp of the last BUY action for the given ticker and execution mode."""
     client = get_bigquery_client()
@@ -694,13 +804,15 @@ def get_last_buy_timestamp(
         SELECT timestamp
         FROM `{table_id}`
         WHERE ticker = @ticker AND action IN ('BUY', 'STRONG BUY') AND dry_run = @dry_run
+          AND (@account_id IS NULL OR account_id = @account_id)
         ORDER BY timestamp DESC
         LIMIT 1
     """
     job_config = bigquery.QueryJobConfig(
         query_parameters=[
             bigquery.ScalarQueryParameter("ticker", "STRING", ticker),
-            bigquery.ScalarQueryParameter("dry_run", "BOOL", dry_run)
+            bigquery.ScalarQueryParameter("dry_run", "BOOL", dry_run),
+            bigquery.ScalarQueryParameter("account_id", "STRING", account_id),
         ]
     )
     try:
@@ -764,7 +876,8 @@ def get_recent_sentiment_scores(
 
 def get_recently_sold_tickers(
     days: int = 21,
-    dataset_id: str = "portfolio_analytics"
+    dataset_id: str = "portfolio_analytics",
+    account_id: str = "real-48661",
 ) -> List[str]:
     """Queries BigQuery and returns the list of stock symbols sold (dry_run = FALSE) in the last N days."""
     client = get_bigquery_client()
@@ -775,11 +888,13 @@ def get_recently_sold_tickers(
         FROM `{table_id}`
         WHERE action IN ('SELL', 'LIQUIDATE')
           AND dry_run = FALSE
+          AND account_id = @account_id
           AND timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @days DAY)
     """
     job_config = bigquery.QueryJobConfig(
         query_parameters=[
-            bigquery.ScalarQueryParameter("days", "INT64", days)
+            bigquery.ScalarQueryParameter("days", "INT64", days),
+            bigquery.ScalarQueryParameter("account_id", "STRING", account_id),
         ]
     )
     try:
@@ -800,13 +915,14 @@ EXECUTION_RUN_STATUSES = {
 }
 
 
-def execution_run_exists(decision_id: str, dry_run: bool, dataset_id: str = "portfolio_analytics") -> bool:
+def execution_run_exists(decision_id: str, dry_run: bool, dataset_id: str = "portfolio_analytics", account_id: str | None = None) -> bool:
     client = get_bigquery_client()
     table_id = f"{client.project}.{dataset_id}.execution_runs"
-    query = f"SELECT 1 FROM `{table_id}` WHERE decision_id = @decision_id AND dry_run = @dry_run LIMIT 1"
+    query = f"SELECT 1 FROM `{table_id}` WHERE decision_id = @decision_id AND dry_run = @dry_run AND status NOT IN ('ABORTED', 'RECONCILIATION_FAILED') AND (@account_id IS NULL OR account_id=@account_id) LIMIT 1"
     config = bigquery.QueryJobConfig(query_parameters=[
         bigquery.ScalarQueryParameter("decision_id", "STRING", decision_id),
         bigquery.ScalarQueryParameter("dry_run", "BOOL", dry_run),
+        bigquery.ScalarQueryParameter("account_id", "STRING", account_id),
     ])
     try:
         return bool(list(client.query(query, job_config=config).result()))
@@ -825,6 +941,16 @@ def insert_execution_run(
     proposal: object = None,
     execution_result: object = None,
     dataset_id: str = "portfolio_analytics",
+    account_id: str | None = None,
+    run_kind: str | None = None,
+    market_date: str | None = None,
+    execution_window: str | None = None,
+    market_batch_id: str | None = None,
+    execution_mode: str | None = None,
+    requested_live: bool | None = None,
+    policy_name: str | None = None,
+    policy_config: object = None,
+    policy_config_hash: str | None = None,
 ) -> None:
     if status not in EXECUTION_RUN_STATUSES:
         raise ValueError(f"Invalid execution run status: {status}")
@@ -841,10 +967,108 @@ def insert_execution_run(
         "violations": json.dumps(violations, default=str) if violations is not None else None,
         "proposal": json.dumps(proposal, default=str) if proposal is not None else None,
         "execution_result": json.dumps(execution_result, default=str) if execution_result is not None else None,
+        "account_id": account_id,
+        "run_kind": run_kind,
+        "market_date": market_date,
+        "execution_window": execution_window,
+        "market_batch_id": market_batch_id,
+        "execution_mode": execution_mode,
+        "requested_live": requested_live,
+        "policy_name": policy_name,
+        "policy_config": policy_config,
+        "policy_config_hash": policy_config_hash,
     }
     table_id = f"{client.project}.{dataset_id}.execution_runs"
     job = client.load_table_from_json([row], table_id, job_config=bigquery.LoadJobConfig(write_disposition="WRITE_APPEND"))
     job.result()
+
+
+def claim_execution_run(
+    *,
+    decision_id: str,
+    dry_run: bool,
+    policy_version: str,
+    policy_allowed: bool,
+    status: str,
+    account_id: str,
+    run_kind: str,
+    market_date: str,
+    execution_window: str,
+    market_batch_id: str,
+    execution_mode: str,
+    requested_live: bool,
+    policy_name: str,
+    policy_config: object,
+    policy_config_hash: str,
+    violations: object = None,
+    proposal: object = None,
+    dataset_id: str = "portfolio_analytics",
+) -> bool:
+    """Atomically claim one account/market-date execution identity."""
+    if status not in EXECUTION_RUN_STATUSES:
+        raise ValueError(f"Invalid execution run status: {status}")
+    client = get_bigquery_client()
+    table_id = f"{client.project}.{dataset_id}.execution_runs"
+    claim_token = uuid.uuid4().hex
+    query = f"""
+      MERGE `{table_id}` target
+      USING (SELECT @account_id account_id, @market_date market_date,
+                    @execution_window execution_window, @run_kind run_kind) source
+      ON target.account_id=source.account_id
+         AND target.market_date=CAST(source.market_date AS DATE)
+         AND target.execution_window=source.execution_window
+         AND target.run_kind=source.run_kind
+      WHEN MATCHED AND target.status IN ('ABORTED', 'RECONCILIATION_FAILED')
+        THEN UPDATE SET claim_token=@claim_token, updated_at=CURRENT_TIMESTAMP(),
+          status=@status, policy_allowed=@policy_allowed, violations=@violations,
+          proposal=@proposal, market_batch_id=@market_batch_id,
+          execution_mode=@execution_mode, requested_live=@requested_live,
+          policy_name=@policy_name, policy_config=PARSE_JSON(@policy_config),
+          policy_config_hash=@policy_config_hash
+      WHEN NOT MATCHED THEN INSERT
+        (decision_id, created_at, updated_at, dry_run, policy_version,
+         policy_allowed, status, violations, proposal, account_id, run_kind,
+         market_date, execution_window, market_batch_id, execution_mode,
+         requested_live, policy_name, policy_config, policy_config_hash, claim_token)
+      VALUES
+        (@decision_id, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP(), @dry_run,
+         @policy_version, @policy_allowed, @status, @violations, @proposal,
+         @account_id, @run_kind, CAST(@market_date AS DATE), @execution_window,
+         @market_batch_id, @execution_mode, @requested_live, @policy_name,
+         PARSE_JSON(@policy_config), @policy_config_hash, @claim_token);
+      SELECT claim_token FROM `{table_id}`
+      WHERE account_id=@account_id AND market_date=CAST(@market_date AS DATE)
+        AND execution_window=@execution_window AND run_kind=@run_kind
+      LIMIT 1
+    """
+    values = {
+        "decision_id": ("STRING", decision_id),
+        "dry_run": ("BOOL", dry_run),
+        "policy_version": ("STRING", policy_version),
+        "policy_allowed": ("BOOL", policy_allowed),
+        "status": ("STRING", status),
+        "violations": ("STRING", json.dumps(violations, default=str) if violations is not None else None),
+        "proposal": ("STRING", json.dumps(proposal, default=str) if proposal is not None else None),
+        "account_id": ("STRING", account_id),
+        "run_kind": ("STRING", run_kind),
+        "market_date": ("STRING", market_date),
+        "execution_window": ("STRING", execution_window),
+        "market_batch_id": ("STRING", market_batch_id),
+        "execution_mode": ("STRING", execution_mode),
+        "requested_live": ("BOOL", requested_live),
+        "policy_name": ("STRING", policy_name),
+        "policy_config": ("STRING", json.dumps(policy_config, sort_keys=True)),
+        "policy_config_hash": ("STRING", policy_config_hash),
+        "claim_token": ("STRING", claim_token),
+    }
+    config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter(name, type_name, value)
+            for name, (type_name, value) in values.items()
+        ]
+    )
+    rows = list(client.query(query, job_config=config).result())
+    return len(rows) == 1 and rows[0].claim_token == claim_token
 
 
 def update_execution_run(
@@ -854,6 +1078,7 @@ def update_execution_run(
     *,
     execution_result: object = None,
     dataset_id: str = "portfolio_analytics",
+    account_id: str | None = None,
 ) -> None:
     if status not in EXECUTION_RUN_STATUSES:
         raise ValueError(f"Invalid execution run status: {status}")
@@ -863,12 +1088,14 @@ def update_execution_run(
         UPDATE `{table_id}`
         SET updated_at = CURRENT_TIMESTAMP(), status = @status, execution_result = @execution_result
         WHERE decision_id = @decision_id AND dry_run = @dry_run
+          AND (@account_id IS NULL OR account_id=@account_id)
     """
     config = bigquery.QueryJobConfig(query_parameters=[
         bigquery.ScalarQueryParameter("status", "STRING", status),
         bigquery.ScalarQueryParameter("execution_result", "STRING", json.dumps(execution_result, default=str) if execution_result is not None else None),
         bigquery.ScalarQueryParameter("decision_id", "STRING", decision_id),
         bigquery.ScalarQueryParameter("dry_run", "BOOL", dry_run),
+        bigquery.ScalarQueryParameter("account_id", "STRING", account_id),
     ])
     client.query(query, job_config=config).result()
 
@@ -885,29 +1112,40 @@ def upsert_position_risk_state(
     breached: bool,
     source: str,
     dataset_id: str = "portfolio_analytics",
+    account_id: str | None = None,
+    position_id: str | None = None,
+    confirmation_count: int = 0,
+    stop_state: str = "ACTIVE",
+    policy_config_hash: str | None = None,
 ) -> None:
     """Persist a monotonic stop. A lower replacement is rejected by the MERGE."""
     client = get_bigquery_client()
     table_id = f"{client.project}.{dataset_id}.position_risk_state"
-    existing_query = f"SELECT stop_price FROM `{table_id}` WHERE account_suffix=@account_suffix AND ticker=@ticker LIMIT 1"
+    existing_query = f"SELECT stop_price FROM `{table_id}` WHERE (@account_id IS NULL AND account_suffix=@account_suffix AND ticker=@ticker) OR (account_id=@account_id AND position_id=@position_id) LIMIT 1"
     lookup_config = bigquery.QueryJobConfig(query_parameters=[
         bigquery.ScalarQueryParameter("account_suffix", "STRING", account_suffix),
         bigquery.ScalarQueryParameter("ticker", "STRING", ticker.upper()),
+        bigquery.ScalarQueryParameter("account_id", "STRING", account_id),
+        bigquery.ScalarQueryParameter("position_id", "STRING", position_id),
     ])
     existing_rows = list(client.query(existing_query, job_config=lookup_config).result())
     if existing_rows and float(existing_rows[0].stop_price) > float(stop_price):
         raise ValueError("Persisted trailing stop cannot be lowered")
     query = f"""
         MERGE `{table_id}` target
-        USING (SELECT @account_suffix account_suffix, @ticker ticker) source
-        ON target.account_suffix = source.account_suffix AND target.ticker = source.ticker
+        USING (SELECT @account_suffix account_suffix, @ticker ticker, @account_id account_id, @position_id position_id) source
+        ON ((source.account_id IS NULL AND target.account_suffix = source.account_suffix AND target.ticker = source.ticker)
+            OR (target.account_id = source.account_id AND target.position_id = source.position_id))
         WHEN MATCHED AND @stop_price >= target.stop_price THEN UPDATE SET
           last_session=@last_session, highest_high=GREATEST(target.highest_high, @highest_high),
-          stop_price=@stop_price, atr=@atr, breached=@breached, updated_at=CURRENT_TIMESTAMP(), source=@source_name
+          stop_price=@stop_price, atr=@atr, breached=@breached, updated_at=CURRENT_TIMESTAMP(), source=@source_name,
+          confirmation_count=@confirmation_count, stop_state=@stop_state, policy_config_hash=@policy_config_hash
         WHEN NOT MATCHED THEN INSERT
-          (account_suffix,ticker,entry_timestamp,last_session,highest_high,stop_price,atr,breached,updated_at,source)
+          (account_suffix,ticker,entry_timestamp,last_session,highest_high,stop_price,atr,breached,updated_at,source,
+           account_id,position_id,confirmation_count,stop_state,policy_config_hash)
         VALUES
-          (@account_suffix,@ticker,@entry_timestamp,@last_session,@highest_high,@stop_price,@atr,@breached,CURRENT_TIMESTAMP(),@source_name)
+          (@account_suffix,@ticker,@entry_timestamp,@last_session,@highest_high,@stop_price,@atr,@breached,CURRENT_TIMESTAMP(),@source_name,
+           @account_id,@position_id,@confirmation_count,@stop_state,@policy_config_hash)
     """
     config = bigquery.QueryJobConfig(query_parameters=[
         bigquery.ScalarQueryParameter("account_suffix", "STRING", account_suffix),
@@ -919,5 +1157,440 @@ def upsert_position_risk_state(
         bigquery.ScalarQueryParameter("atr", "FLOAT", atr),
         bigquery.ScalarQueryParameter("breached", "BOOL", breached),
         bigquery.ScalarQueryParameter("source_name", "STRING", source),
+        bigquery.ScalarQueryParameter("account_id", "STRING", account_id),
+        bigquery.ScalarQueryParameter("position_id", "STRING", position_id),
+        bigquery.ScalarQueryParameter("confirmation_count", "INT64", confirmation_count),
+        bigquery.ScalarQueryParameter("stop_state", "STRING", stop_state),
+        bigquery.ScalarQueryParameter("policy_config_hash", "STRING", policy_config_hash),
     ])
     client.query(query, job_config=config).result()
+
+
+def seed_account_registry(dataset_id: str = "portfolio_analytics") -> None:
+    """Idempotently seed the primary real account and the initial ATR experiments."""
+    client = get_bigquery_client()
+    table_id = f"{client.project}.{dataset_id}.accounts"
+    immediate = AtrPolicyConfig()
+    confirmation = AtrPolicyConfig(
+        atr_confirmation_closes=2,
+        cancel_pending_exit_on_recovery=True,
+    )
+    rows = [
+        {
+            "account_id": "real-48661",
+            "display_name": "Robinhood $100",
+            "account_type": "REAL",
+            "status": "ACTIVE",
+            "is_dashboard_default": True,
+            "broker_provider": "ROBINHOOD",
+            "broker_account_ref": "ROBINHOOD_ACCOUNT_NUMBER",
+            "broker_account_suffix": "48661",
+            "live_execution_allowed": False,
+            "initial_cash": 100.0,
+            "base_currency": "USD",
+            "policy_name": "atr-immediate-exit",
+            "policy_version": "atr-v1",
+            "policy_config": immediate.as_dict(),
+            "policy_config_hash": policy_config_hash(immediate),
+        },
+        {
+            "account_id": "exp-atr-immediate",
+            "display_name": "ATR Immediate Exit",
+            "account_type": "PAPER",
+            "status": "ACTIVE",
+            "is_dashboard_default": False,
+            "broker_provider": None,
+            "broker_account_ref": None,
+            "broker_account_suffix": None,
+            "live_execution_allowed": False,
+            "initial_cash": 10_000.0,
+            "base_currency": "USD",
+            "policy_name": "atr-immediate-exit",
+            "policy_version": "atr-v1",
+            "policy_config": immediate.as_dict(),
+            "policy_config_hash": policy_config_hash(immediate),
+        },
+        {
+            "account_id": "exp-atr-confirmation",
+            "display_name": "ATR Two-Close Confirmation",
+            "account_type": "PAPER",
+            "status": "ACTIVE",
+            "is_dashboard_default": False,
+            "broker_provider": None,
+            "broker_account_ref": None,
+            "broker_account_suffix": None,
+            "live_execution_allowed": False,
+            "initial_cash": 10_000.0,
+            "base_currency": "USD",
+            "policy_name": "atr-confirmed-exit",
+            "policy_version": "atr-v1",
+            "policy_config": confirmation.as_dict(),
+            "policy_config_hash": policy_config_hash(confirmation),
+        },
+    ]
+    query = f"""
+        MERGE `{table_id}` target
+        USING (SELECT @account_id account_id) source
+        ON target.account_id = source.account_id
+        WHEN NOT MATCHED THEN INSERT (
+          account_id, display_name, account_type, status, is_dashboard_default,
+          broker_provider, broker_account_ref, broker_account_suffix,
+          live_execution_allowed, initial_cash, base_currency, policy_name,
+          policy_version, policy_config, policy_config_hash, created_at, updated_at
+        ) VALUES (
+          @account_id, @display_name, @account_type, @status,
+          @is_dashboard_default, @broker_provider, @broker_account_ref,
+          @broker_account_suffix, @live_execution_allowed, @initial_cash,
+          @base_currency, @policy_name, @policy_version, PARSE_JSON(@policy_config),
+          @policy_config_hash, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()
+        )
+    """
+    for row in rows:
+        value = dict(row)
+        value["policy_config"] = json.dumps(value["policy_config"], sort_keys=True)
+        types = {
+            "is_dashboard_default": "BOOL",
+            "live_execution_allowed": "BOOL",
+            "initial_cash": "FLOAT64",
+        }
+        config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter(
+                    key, types.get(key, "STRING"), item
+                )
+                for key, item in value.items()
+            ]
+        )
+        client.query(query, job_config=config).result()
+
+
+def backfill_account_scope(dataset_id: str = "portfolio_analytics") -> None:
+    """Idempotently attribute legacy rows without changing their historical meaning."""
+    client = get_bigquery_client()
+    project = client.project
+    statements = [
+        f"UPDATE `{project}.{dataset_id}.trade_history` SET account_id='real-48661', execution_mode=IF(COALESCE(dry_run, TRUE), 'REAL_DRY_RUN', 'LIVE') WHERE account_id IS NULL",
+        f"UPDATE `{project}.{dataset_id}.portfolio_snapshot` SET account_id='real-48661', snapshot_type='BROKER_CONFIRMED' WHERE account_id IS NULL",
+        f"UPDATE `{project}.{dataset_id}.execution_runs` SET account_id='real-48661', run_kind='EXECUTION', execution_window='close', execution_mode=IF(dry_run, 'REAL_DRY_RUN', 'LIVE'), requested_live=NOT dry_run WHERE account_id IS NULL",
+        f"UPDATE `{project}.{dataset_id}.position_risk_state` SET account_id='real-48661', position_id=CONCAT('legacy-', LOWER(ticker)), confirmation_count=IF(breached, 1, 0), stop_state=IF(breached, 'EXIT_CONFIRMED', 'ACTIVE') WHERE account_id IS NULL",
+        f"UPDATE `{project}.{dataset_id}.infrastructure_market_metrics` SET record_scope='LEGACY_COMBINED' WHERE record_scope IS NULL",
+    ]
+    for statement in statements:
+        client.query(statement).result()
+
+
+def list_accounts(
+    *, active_only: bool = False, dataset_id: str = "portfolio_analytics"
+) -> list[TradingAccount]:
+    client = get_bigquery_client()
+    table_id = f"{client.project}.{dataset_id}.accounts"
+    where = "WHERE status = 'ACTIVE'" if active_only else ""
+    rows = list(
+        client.query(
+            f"SELECT * FROM `{table_id}` {where} ORDER BY account_id"
+        ).result()
+    )
+    accounts = [TradingAccount.from_row(row) for row in rows]
+    defaults = [
+        account
+        for account in accounts
+        if account.status.value == "ACTIVE"
+        and account.account_type.value == "REAL"
+        and account.is_dashboard_default
+    ]
+    if len(defaults) != 1:
+        raise RuntimeError("Account registry must contain exactly one active default real account")
+    return accounts
+
+
+def get_account(account_id: str, dataset_id: str = "portfolio_analytics") -> TradingAccount:
+    matches = [
+        account
+        for account in list_accounts(dataset_id=dataset_id)
+        if account.account_id == account_id
+    ]
+    if len(matches) != 1:
+        raise LookupError(f"Expected exactly one account row for {account_id!r}")
+    return matches[0]
+
+
+def get_latest_account_snapshot(
+    account_id: str, dataset_id: str = "portfolio_analytics"
+) -> dict[str, Any] | None:
+    client = get_bigquery_client()
+    table_id = f"{client.project}.{dataset_id}.portfolio_snapshot"
+    query = f"""
+        SELECT * FROM `{table_id}`
+        WHERE account_id=@account_id
+        ORDER BY timestamp DESC LIMIT 1
+    """
+    config = bigquery.QueryJobConfig(
+        query_parameters=[bigquery.ScalarQueryParameter("account_id", "STRING", account_id)]
+    )
+    rows = list(client.query(query, job_config=config).result())
+    return dict(rows[0].items()) if rows else None
+
+
+def get_latest_account_activity(
+    account_id: str, dataset_id: str = "portfolio_analytics"
+) -> dict[str, Any] | None:
+    """Return the latest audited recommendation and its account-scoped fills."""
+    client = get_bigquery_client()
+    project = client.project
+    config = bigquery.QueryJobConfig(query_parameters=[
+        bigquery.ScalarQueryParameter("account_id", "STRING", account_id)
+    ])
+    runs = list(client.query(
+        f"""
+        SELECT decision_id, status, proposal, execution_mode, run_kind,
+               created_at, updated_at
+        FROM `{project}.{dataset_id}.execution_runs`
+        WHERE account_id=@account_id
+        ORDER BY updated_at DESC LIMIT 1
+        """,
+        job_config=config,
+    ).result())
+    if not runs:
+        return None
+    activity = dict(runs[0].items())
+    proposal = activity.get("proposal") or "[]"
+    if isinstance(proposal, str):
+        proposal = json.loads(proposal)
+    activity["recommendation"] = proposal if isinstance(proposal, list) else []
+    trade_config = bigquery.QueryJobConfig(query_parameters=[
+        bigquery.ScalarQueryParameter("account_id", "STRING", account_id),
+        bigquery.ScalarQueryParameter(
+            "decision_id", "STRING", activity["decision_id"]
+        ),
+    ])
+    activity["trades"] = [
+        dict(row.items())
+        for row in client.query(
+            f"""
+            SELECT ticker, action, amount_usd, requested_quantity,
+                   filled_quantity, fill_price, order_status, execution_mode
+            FROM `{project}.{dataset_id}.trade_history`
+            WHERE account_id=@account_id AND decision_id=@decision_id
+            ORDER BY timestamp, ticker
+            """,
+            job_config=trade_config,
+        ).result()
+    ]
+    return activity
+
+
+def recapitalize_paper_account(
+    account: TradingAccount,
+    *,
+    target_equity: float,
+    dataset_id: str = "portfolio_analytics",
+) -> dict[str, Any]:
+    """Add an auditable cash-capital snapshot without fabricating a market trade."""
+    from app.paper_executor import (
+        PaperHolding,
+        PaperPortfolio,
+        recapitalize_paper_portfolio,
+    )
+
+    if account.account_type.value != "PAPER":
+        raise ValueError("Only paper accounts can be recapitalized")
+    snapshot = get_latest_account_snapshot(account.account_id, dataset_id)
+    if snapshot:
+        raw_holdings = snapshot.get("holdings") or "[]"
+        if isinstance(raw_holdings, str):
+            raw_holdings = json.loads(raw_holdings)
+        holdings = tuple(
+            PaperHolding(
+                str(item["symbol"]).upper(),
+                float(item["shares"]),
+                float(item["average_buy_price"]),
+                float(item["current_price"]),
+            )
+            for item in raw_holdings
+        )
+        current = PaperPortfolio(float(snapshot["total_cash"]), holdings)
+    else:
+        current = PaperPortfolio(float(account.initial_cash), ())
+    adjusted = recapitalize_paper_portfolio(current, target_equity)
+    holdings_json = json.dumps(
+        [
+            {
+                "symbol": item.symbol,
+                "shares": item.shares,
+                "average_buy_price": item.average_buy_price,
+                "current_price": item.current_price,
+                "equity": item.equity,
+            }
+            for item in adjusted.holdings
+        ]
+    )
+    cost_basis = sum(
+        item.shares * item.average_buy_price for item in adjusted.holdings
+    )
+    holdings_value = sum(item.equity for item in adjusted.holdings)
+    unrealized = holdings_value - cost_basis
+    unrealized_pct = unrealized / cost_basis * 100 if cost_basis else 0.0
+    snapshot_id = f"{account.account_id}:capital:{float(target_equity):.2f}"
+    client = get_bigquery_client()
+    project = client.project
+    query = f"""
+      BEGIN TRANSACTION;
+      UPDATE `{project}.{dataset_id}.accounts`
+      SET initial_cash=@target_equity, updated_at=CURRENT_TIMESTAMP()
+      WHERE account_id=@account_id AND account_type='PAPER';
+      ASSERT @@row_count = 1 AS 'Expected exactly one paper account';
+      INSERT INTO `{project}.{dataset_id}.portfolio_snapshot`
+        (timestamp, account_number, total_equity, total_cash,
+         unrealized_gain_loss, unrealized_gain_loss_percent, holdings,
+         buying_power, summary, account_id, snapshot_id, snapshot_type,
+         decision_id, market_batch_id, policy_config_hash)
+      SELECT CURRENT_TIMESTAMP(), 'PAPER', @target_equity, @total_cash,
+        @unrealized, @unrealized_pct, @holdings_json, @total_cash,
+        'Paper capital contribution; trade history preserved', @account_id,
+        @snapshot_id, 'PAPER_CAPITAL_ADJUSTMENT', NULL, NULL,
+        @policy_config_hash
+      FROM (SELECT 1)
+      WHERE NOT EXISTS (
+        SELECT 1 FROM `{project}.{dataset_id}.portfolio_snapshot`
+        WHERE snapshot_id=@snapshot_id
+      );
+      COMMIT TRANSACTION;
+    """
+    config = bigquery.QueryJobConfig(query_parameters=[
+        bigquery.ScalarQueryParameter("account_id", "STRING", account.account_id),
+        bigquery.ScalarQueryParameter("target_equity", "FLOAT64", float(target_equity)),
+        bigquery.ScalarQueryParameter("total_cash", "FLOAT64", adjusted.cash),
+        bigquery.ScalarQueryParameter("unrealized", "FLOAT64", unrealized),
+        bigquery.ScalarQueryParameter("unrealized_pct", "FLOAT64", unrealized_pct),
+        bigquery.ScalarQueryParameter("holdings_json", "STRING", holdings_json),
+        bigquery.ScalarQueryParameter("snapshot_id", "STRING", snapshot_id),
+        bigquery.ScalarQueryParameter(
+            "policy_config_hash", "STRING", account.policy_config_hash
+        ),
+    ])
+    client.query(query, job_config=config).result()
+    return {
+        "account_id": account.account_id,
+        "snapshot_id": snapshot_id,
+        "total_equity": float(target_equity),
+        "total_cash": adjusted.cash,
+        "holdings_value": holdings_value,
+    }
+
+
+def commit_paper_execution(
+    *,
+    account: TradingAccount,
+    decision_id: str,
+    market_batch_id: str,
+    result,
+    summary: str | None = None,
+    dataset_id: str = "portfolio_analytics",
+) -> None:
+    """Atomically commit idempotent paper fills, snapshot, and run completion."""
+    if account.account_type.value != "PAPER":
+        raise ValueError("commit_paper_execution accepts only paper accounts")
+    client = get_bigquery_client()
+    project = client.project
+    fills = [
+        {
+            "trade_id": fill.trade_id,
+            "ticker": fill.ticker,
+            "side": fill.side,
+            "shares": fill.shares,
+            "fill_price": fill.fill_price,
+            "amount_usd": fill.amount_usd,
+            "fees_usd": fill.fees_usd,
+            "slippage_usd": fill.slippage_usd,
+            "action": "BUY" if fill.side == "buy" else "SELL",
+            "policy_action": fill.action.value,
+        }
+        for fill in result.fills
+    ]
+    holdings = [
+        {
+            "symbol": holding.symbol,
+            "shares": holding.shares,
+            "average_buy_price": holding.average_buy_price,
+            "current_price": holding.current_price,
+            "equity": holding.equity,
+        }
+        for holding in result.portfolio.holdings
+    ]
+    holdings_value = sum(item["equity"] for item in holdings)
+    cost_basis = sum(
+        item["shares"] * item["average_buy_price"] for item in holdings
+    )
+    unrealized = holdings_value - cost_basis
+    unrealized_pct = unrealized / cost_basis * 100 if cost_basis else 0.0
+    query = f"""
+      BEGIN TRANSACTION;
+      INSERT INTO `{project}.{dataset_id}.trade_history`
+        (ticker, action, amount_usd, timestamp, reasoning, dry_run, decision_id,
+         order_status, requested_quantity, filled_quantity, account_id, trade_id,
+         execution_mode, fill_price, fees_usd, slippage_usd, market_batch_id)
+      SELECT
+        JSON_VALUE(fill, '$.ticker'), JSON_VALUE(fill, '$.action'),
+        CAST(JSON_VALUE(fill, '$.amount_usd') AS FLOAT64), CURRENT_TIMESTAMP(),
+        'Deterministic persistent paper fill', TRUE, @decision_id, 'PAPER_FILLED',
+        CAST(JSON_VALUE(fill, '$.shares') AS FLOAT64),
+        CAST(JSON_VALUE(fill, '$.shares') AS FLOAT64), @account_id,
+        JSON_VALUE(fill, '$.trade_id'), 'PAPER',
+        CAST(JSON_VALUE(fill, '$.fill_price') AS FLOAT64),
+        CAST(JSON_VALUE(fill, '$.fees_usd') AS FLOAT64),
+        CAST(JSON_VALUE(fill, '$.slippage_usd') AS FLOAT64), @market_batch_id
+      FROM UNNEST(JSON_QUERY_ARRAY(PARSE_JSON(@fills_json))) fill
+      WHERE NOT EXISTS (
+        SELECT 1 FROM `{project}.{dataset_id}.trade_history` existing
+        WHERE existing.trade_id = JSON_VALUE(fill, '$.trade_id')
+      );
+      INSERT INTO `{project}.{dataset_id}.portfolio_snapshot`
+        (timestamp, account_number, total_equity, total_cash,
+         unrealized_gain_loss, unrealized_gain_loss_percent, holdings,
+         buying_power, summary, account_id, snapshot_id, snapshot_type,
+         decision_id, market_batch_id, policy_config_hash)
+      SELECT CURRENT_TIMESTAMP(), 'PAPER', @total_equity, @total_cash,
+        @unrealized, @unrealized_pct, @holdings_json, @total_cash, @summary,
+        @account_id, @snapshot_id, 'PAPER_COMMITTED', @decision_id,
+        @market_batch_id, @policy_config_hash
+      FROM (SELECT 1)
+      WHERE NOT EXISTS (
+        SELECT 1 FROM `{project}.{dataset_id}.portfolio_snapshot`
+        WHERE snapshot_id=@snapshot_id
+      );
+      UPDATE `{project}.{dataset_id}.execution_runs`
+      SET status='COMPLETED', updated_at=CURRENT_TIMESTAMP(),
+          execution_result=@execution_result
+      WHERE account_id=@account_id AND decision_id=@decision_id;
+      UPDATE `{project}.{dataset_id}.position_risk_state`
+      SET stop_state='POSITION_CLOSED', position_closed_at=CURRENT_TIMESTAMP(),
+          updated_at=CURRENT_TIMESTAMP()
+      WHERE account_id=@account_id AND ticker IN (
+        SELECT JSON_VALUE(fill, '$.ticker')
+        FROM UNNEST(JSON_QUERY_ARRAY(PARSE_JSON(@fills_json))) fill
+        WHERE JSON_VALUE(fill, '$.policy_action')='EXIT'
+      ) AND stop_state != 'POSITION_CLOSED';
+      COMMIT TRANSACTION;
+    """
+    params = [
+        bigquery.ScalarQueryParameter("decision_id", "STRING", decision_id),
+        bigquery.ScalarQueryParameter("account_id", "STRING", account.account_id),
+        bigquery.ScalarQueryParameter("market_batch_id", "STRING", market_batch_id),
+        bigquery.ScalarQueryParameter("fills_json", "STRING", json.dumps(fills)),
+        bigquery.ScalarQueryParameter("holdings_json", "STRING", json.dumps(holdings)),
+        bigquery.ScalarQueryParameter("total_equity", "FLOAT64", result.portfolio.total_equity),
+        bigquery.ScalarQueryParameter("total_cash", "FLOAT64", result.portfolio.cash),
+        bigquery.ScalarQueryParameter("unrealized", "FLOAT64", unrealized),
+        bigquery.ScalarQueryParameter("unrealized_pct", "FLOAT64", unrealized_pct),
+        bigquery.ScalarQueryParameter("summary", "STRING", _sanitize_string(summary)),
+        bigquery.ScalarQueryParameter("snapshot_id", "STRING", result.snapshot_id),
+        bigquery.ScalarQueryParameter("policy_config_hash", "STRING", account.policy_config_hash),
+        bigquery.ScalarQueryParameter(
+            "execution_result",
+            "STRING",
+            json.dumps({"paper_fills": fills, "snapshot_id": result.snapshot_id}),
+        ),
+    ]
+    client.query(
+        query, job_config=bigquery.QueryJobConfig(query_parameters=params)
+    ).result()

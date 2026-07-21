@@ -13,6 +13,9 @@
 # limitations under the License.
 
 import asyncio
+import argparse
+import copy
+import hashlib
 import os
 import sys
 from datetime import datetime, timezone
@@ -54,20 +57,81 @@ load_env_file()
 os.environ["INTEGRATION_TEST"] = "TRUE"
 
 from app.tools.bigquery_service import (
-    setup_bigquery, 
+    backfill_account_scope,
+    get_account,
+    get_latest_account_activity,
+    get_latest_account_snapshot,
     get_latest_market_metrics,
+    list_accounts,
+    seed_account_registry,
+    setup_bigquery,
 )
+from app.accounts import AccountRunContext, RunKind, preflight_accounts
 from app.tools.data_ingestion import print_portfolio_table, run_sentiment_analysis_pipeline
 from app.agent import financial_analysis_pipeline
 
-async def run_pipeline(dataset_id: str = "portfolio_analytics") -> None:
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Run account-scoped trading pipeline")
+    selectors = parser.add_mutually_exclusive_group()
+    selectors.add_argument("--account", help="Stable account ID from BigQuery")
+    selectors.add_argument("--all-accounts", action="store_true", help="Run every active account")
+    parser.add_argument("--list-accounts", action="store_true", help="List registry rows and exit")
+    parser.add_argument(
+        "--run-kind", choices=("advisory", "execution"), default="execution"
+    )
+    parser.add_argument("--dataset-id", default="portfolio_analytics")
+    return parser
+
+
+def _validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    if args.list_accounts:
+        if args.account or args.all_accounts:
+            parser.error("--list-accounts cannot be combined with an account selector")
+        return
+    if not args.account and not args.all_accounts:
+        parser.error("one of --account or --all-accounts is required")
+
+
+def _market_batch_id(rows: list[dict]) -> str:
+    material = "|".join(
+        sorted(
+            f"{row.get('ticker')}:{row.get('timestamp')}:{row.get('current_price')}"
+            for row in rows
+        )
+    )
+    return hashlib.sha256(material.encode()).hexdigest()
+
+
+async def run_pipeline(
+    *,
+    selected_account_id: str | None = None,
+    all_accounts: bool = False,
+    run_kind: str = "execution",
+    dataset_id: str = "portfolio_analytics",
+) -> int:
     print(f"{CLR_BOLD}{CLR_BLUE}[{datetime.now(timezone.utc).isoformat()}] Starting AI Infrastructure Analyst pipeline...{CLR_RESET}")
 
     # Step 1: Initialize BigQuery Dataset and Tables
     print(f"\n{CLR_BOLD}{CLR_CYAN}🗄️ [PHASE: 1. Setup BigQuery Database]{CLR_RESET}")
     print(f"   Initializing BigQuery dataset '{dataset_id}' and validating schemas...")
     setup_bigquery(dataset_id=dataset_id)
+    seed_account_registry(dataset_id=dataset_id)
+    backfill_account_scope(dataset_id=dataset_id)
     print(f"   {CLR_GREEN}BigQuery verification complete.{CLR_RESET}")
+
+    selected = (
+        list_accounts(active_only=True, dataset_id=dataset_id)
+        if all_accounts
+        else [get_account(selected_account_id or "", dataset_id=dataset_id)]
+    )
+    skip_live_trades = os.environ.get("SKIP_LIVE_TRADES", "true").lower() == "true"
+    modes = preflight_accounts(selected, skip_live_trades=skip_live_trades)
+    print("   Account preflight:")
+    for account in selected:
+        print(
+            f"     - {account.display_name} ({account.account_id}, {account.account_type.value}) "
+            f"=> {modes[account.account_id].value}"
+        )
 
     # Determine if we skip ingestion (from env or if BQ today has records)
     skip_ingestion = os.environ.get("SKIP_INGESTION", "false").lower() == "true"
@@ -89,16 +153,102 @@ async def run_pipeline(dataset_id: str = "portfolio_analytics") -> None:
         # Run daily analysis pipeline helper from data_ingestion tool
         ranked_portfolio, graveyard_rows = await run_sentiment_analysis_pipeline(dataset_id=dataset_id)
 
-    # Run trading agent for portfolio execution and rebalancing
-    final_portfolio = await financial_analysis_pipeline(
-        ranked_portfolio=ranked_portfolio,
-        graveyard_rows=graveyard_rows,
-        dataset_id=dataset_id
-    )
-    print(f"\n{CLR_BOLD}{CLR_GREEN}🚀 [PHASE: Complete] Portfolio execution and logs finalized.{CLR_RESET}")
+    market_batch_id = _market_batch_id(ranked_portfolio)
+    failures: list[tuple[str, str]] = []
+    for account in selected:
+        print(
+            f"\n{CLR_BOLD}{CLR_BLUE}=== ACCOUNT: {account.display_name} "
+            f"[{account.account_id}] ({account.account_type.value}) ==={CLR_RESET}"
+        )
+        context = AccountRunContext(
+            account=account,
+            run_kind=RunKind(run_kind.upper()),
+            execution_mode=modes[account.account_id],
+            requested_live=not skip_live_trades,
+            market_batch_id=market_batch_id,
+            suppress_account_notification=all_accounts,
+        )
+        try:
+            final_portfolio = await financial_analysis_pipeline(
+                ranked_portfolio=copy.deepcopy(ranked_portfolio),
+                graveyard_rows=copy.deepcopy(graveyard_rows),
+                dataset_id=dataset_id,
+                run_context=context,
+            )
+            print_portfolio_table(final_portfolio)
+        except Exception as exc:
+            failures.append((account.account_id, str(exc)))
+            print(f"{CLR_RED}[ACCOUNT FAILED] {account.account_id}: {exc}{CLR_RESET}")
+    if all_accounts:
+        try:
+            import json
+            from app.app_utils.discord_notifier import send_accounts_summary_webhook
 
-    # Print final portfolio table (now with Trading Agent signals & theses!)
-    print_portfolio_table(final_portfolio)
+            failure_ids = {account_id for account_id, _ in failures}
+            selected_ids = {account.account_id for account in selected}
+            summary_rows = []
+            for account in list_accounts(dataset_id=dataset_id):
+                snapshot = get_latest_account_snapshot(account.account_id, dataset_id)
+                activity = get_latest_account_activity(account.account_id, dataset_id)
+                raw_holdings = (snapshot or {}).get("holdings") or "[]"
+                if isinstance(raw_holdings, str):
+                    raw_holdings = json.loads(raw_holdings)
+                summary_rows.append({
+                    "account_id": account.account_id,
+                    "display_name": account.display_name,
+                    "account_type": account.account_type.value,
+                    "status": account.status.value,
+                    "initial_cash": account.initial_cash,
+                    "policy_name": account.policy_name,
+                    "total_equity": (snapshot or {}).get("total_equity"),
+                    "total_cash": (snapshot or {}).get("total_cash"),
+                    "holdings": raw_holdings,
+                    "decision_id": (activity or {}).get("decision_id"),
+                    "decision_status": (activity or {}).get("status"),
+                    "recommendation": (activity or {}).get("recommendation", []),
+                    "trades": (activity or {}).get("trades", []),
+                    "run_status": (
+                        "FAILED" if account.account_id in failure_ids
+                        else "PROCESSED" if account.account_id in selected_ids
+                        else "NOT RUN"
+                    ),
+                })
+            send_accounts_summary_webhook(
+                summary_rows,
+                run_kind=run_kind,
+                is_dry_run=skip_live_trades,
+            )
+        except Exception as exc:
+            print(f"{CLR_YELLOW}Warning: consolidated Discord summary failed: {exc}{CLR_RESET}")
+    if failures:
+        print(f"\n{CLR_RED}{len(failures)} account run(s) failed:{CLR_RESET}")
+        for account_id, reason in failures:
+            print(f"  - {account_id}: {reason}")
+        return 1
+    print(f"\n{CLR_BOLD}{CLR_GREEN}🚀 [PHASE: Complete] All selected accounts finalized.{CLR_RESET}")
+    return 0
 
 if __name__ == "__main__":
-    asyncio.run(run_pipeline())
+    cli_parser = build_parser()
+    cli_args = cli_parser.parse_args()
+    _validate_args(cli_parser, cli_args)
+    if cli_args.list_accounts:
+        setup_bigquery(dataset_id=cli_args.dataset_id)
+        seed_account_registry(dataset_id=cli_args.dataset_id)
+        for item in list_accounts(dataset_id=cli_args.dataset_id):
+            print(
+                f"{item.account_id}\t{item.display_name}\t{item.account_type.value}\t"
+                f"{item.status.value}\t{item.policy_name}/{item.policy_version}\t"
+                f"live_eligible={item.live_execution_allowed}"
+            )
+        raise SystemExit(0)
+    raise SystemExit(
+        asyncio.run(
+            run_pipeline(
+                selected_account_id=cli_args.account,
+                all_accounts=cli_args.all_accounts,
+                run_kind=cli_args.run_kind,
+                dataset_id=cli_args.dataset_id,
+            )
+        )
+    )

@@ -153,7 +153,7 @@ This section provides all necessary setup, run, and deployment details to run th
    ROBINHOOD_ACCOUNT_NUMBER=XXXXX48661  # Security guardrail target account
    
    # Execution Flags
-   SKIP_LIVE_TRADES=true   # Set to false to perform real trades
+   SKIP_LIVE_TRADES=true   # Required while P0 work remains; account registry is an additional gate
    SKIP_INGESTION=false    # Set to true to query today's BQ logs instead of re-scraping yfinance
    ```
 
@@ -164,15 +164,29 @@ This section provides all necessary setup, run, and deployment details to run th
   cd agent
   PYTHONPATH=. uv run pytest
   ```
-* **Run Daily Ingestion & Trading Pipeline**: Runs technical screening, news scraping, LLM sentiment ranking, LoopAgent rebalancing debate, and sequential order execution:
+* **Run Daily Ingestion & Account-Scoped Pipeline**: Ingests once, validates every selected account before processing, then runs accounts sequentially:
   ```bash
   cd agent
-  uv run run_pipeline.py
+  SKIP_LIVE_TRADES=true uv run run_pipeline.py --all-accounts --run-kind execution
   ```
+  An all-account run sends one consolidated Discord embed covering every registry
+  account (including paused accounts), with friendly name, status, equity, cash,
+  holdings, P&L versus configured starting capital, combined performance, the
+  latest audited target allocation, and the orders tied to that decision.
+  Paper accounts start with `$10,000`; capitalization is recorded as a portfolio
+  snapshot rather than a fabricated trade.
+  With `SKIP_LIVE_TRADES=true`, active `PAPER` accounts commit fills to their
+  persistent simulated ledgers, while `REAL` accounts are restricted to
+  `REAL_DRY_RUN`; no Robinhood order can be submitted.
 * **Run Pipeline Skipping Ingestion (Dry-run Debugging)**: Bypass scraping and go straight to execution using cached today's BigQuery metrics:
   ```bash
   cd agent
-  SKIP_INGESTION=true uv run run_pipeline.py
+  SKIP_LIVE_TRADES=true SKIP_INGESTION=true uv run run_pipeline.py --account exp-atr-confirmation --run-kind execution
+  ```
+* **List configured accounts**: Prints friendly names, types, status, policy version, and live eligibility without exposing broker secrets:
+  ```bash
+  cd agent
+  SKIP_LIVE_TRADES=true uv run run_pipeline.py --list-accounts
   ```
 * **Run Streamlit Dashboard Locally**:
   ```bash
@@ -216,6 +230,7 @@ The frontend Streamlit app is containerized via `frontend/Dockerfile` and serves
     * `portfolio_snapshot`: Portfolio total equity, cash, and JSON-encoded holdings.
     * `execution_runs`: Policy decisions, reason codes, execution status, and reconciliation results.
     * `position_risk_state`: Monotonic ATR stop state for open positions.
+    * `accounts`: Friendly account registry, brokerless paper/real account type, dashboard default, live eligibility, and validated policy JSON/hash.
   - Initialized automatically on startup via `setup_bigquery()` in [bigquery_service.py](file:///Users/sagar/Documents/ML/stock-trader/agent/app/tools/bigquery_service.py).
   - IAM Permissions: Make sure the service account running the Cloud Run Streamlit dashboard has `BigQuery Admin` or `BigQuery Data Editor` + `BigQuery Job User` roles.
 

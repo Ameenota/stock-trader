@@ -181,3 +181,166 @@ def send_discord_webhook(
         logger.error(f"Unexpected error sending Discord webhook: {e}")
         print(f"⚠️ [DISCORD] Unexpected error sending notification: {e}")
         return False
+
+
+def send_accounts_summary_webhook(
+    accounts: List[Dict[str, Any]],
+    *,
+    run_kind: str,
+    is_dry_run: bool,
+) -> bool:
+    """Send one registry-wide performance report after an account batch."""
+    webhook_url = os.environ.get("DISCORD_WEBHOOK_URL")
+    if not webhook_url:
+        logger.warning("Discord integration bypassed: DISCORD_WEBHOOK_URL is not set.")
+        print("⚠️ [DISCORD] Bypassed consolidated account summary; webhook is missing.")
+        return False
+
+    fields = []
+    combined_equity = 0.0
+    combined_baseline = 0.0
+    reported = 0
+    processed_ids = []
+    reporting_only_ids = []
+    for account in accounts:
+        account_id = str(account["account_id"])
+        run_status = str(account.get("run_status", "NOT SELECTED"))
+        if run_status in {"PROCESSED", "FAILED"}:
+            processed_ids.append(account_id)
+        else:
+            reporting_only_ids.append(account_id)
+        baseline = float(account["initial_cash"])
+        equity = account.get("total_equity")
+        cash = account.get("total_cash")
+        if equity is None:
+            performance = "No portfolio snapshot yet"
+        else:
+            equity = float(equity)
+            cash = float(cash or 0.0)
+            pnl = equity - baseline
+            pnl_pct = pnl / baseline * 100
+            pnl_money = f"{'+' if pnl >= 0 else '-'}${abs(pnl):,.2f}"
+            combined_equity += equity
+            combined_baseline += baseline
+            reported += 1
+            performance = (
+                f"• **Equity**: `${equity:,.2f}`\n"
+                f"• **Cash**: `${cash:,.2f}`\n"
+                f"• **P&L vs ${baseline:,.2f}**: `{pnl_money}` (`{pnl_pct:+.2f}%`)"
+            )
+        holdings = account.get("holdings") or []
+        symbols = ", ".join(
+            str(item.get("symbol") or item.get("ticker") or "?")
+            for item in holdings
+        ) or "Cash only"
+        recommendation = account.get("recommendation") or []
+        target_lines = []
+        target_total = 0.0
+        for target in recommendation:
+            weight = float(target.get("weight_pct") or 0.0)
+            weight_pct = weight * 100 if abs(weight) <= 1 else weight
+            target_total += weight_pct
+            target_lines.append(
+                f"{str(target.get('ticker') or '?').upper()} {weight_pct:.1f}%"
+            )
+        if target_total < 100:
+            target_lines.append(f"CASH {max(0.0, 100 - target_total):.1f}%")
+        targets_text = ", ".join(target_lines) or "No equity allocation"
+        trade_lines = []
+        for trade in account.get("trades") or []:
+            action = str(trade.get("action") or "TRADE").upper()
+            ticker = str(trade.get("ticker") or "?").upper()
+            quantity = trade.get("filled_quantity")
+            if quantity is None:
+                quantity = trade.get("requested_quantity")
+            amount = trade.get("amount_usd")
+            detail = f"{action} {ticker}"
+            if quantity is not None:
+                detail += f" {float(quantity):.4f} sh"
+            if amount is not None:
+                detail += f" (~${float(amount):,.2f})"
+            trade_lines.append(detail)
+        trades_text = "; ".join(trade_lines) or "NO TRADE"
+        decision_id = account.get("decision_id")
+        decision_status = account.get("decision_status") or "UNKNOWN"
+        activity = (
+            f"• **Latest decision**: `{decision_id}` (`{decision_status}`)\n"
+            f"• **Recommended target**: `{targets_text}`\n"
+            f"• **Orders for that decision**: `{trades_text}`\n"
+            if decision_id
+            else "• **Latest decision**: `NONE`\n"
+        )
+        performance = (
+            f"• **Account ID**: `{account_id}`\n"
+            f"• **Ledger type**: `{account['account_type']}`\n"
+            f"• **Account status**: `{account['status']}`\n"
+            f"• **Used this batch**: `{'YES' if run_status in {'PROCESSED', 'FAILED'} else 'NO'}`"
+            f" (`{run_status}`)\n"
+            f"{activity}"
+            f"{performance}\n"
+            f"• **Holdings**: `{symbols}`"
+            f"\n• **Policy**: `{account['policy_name']}`"
+        )
+        fields.append({
+            "name": (
+                f"{'🟢' if account['account_type'] == 'REAL' else '🧪'} "
+                f"{account['account_type']} · {account['display_name']}"
+            ),
+            "value": performance[:1024],
+            "inline": False,
+        })
+
+    if reported:
+        combined_pnl = combined_equity - combined_baseline
+        combined_pct = combined_pnl / combined_baseline * 100
+        combined_money = (
+            f"{'+' if combined_pnl >= 0 else '-'}${abs(combined_pnl):,.2f}"
+        )
+        overall = (
+            f"• **Accounts reported**: `{reported}/{len(accounts)}`\n"
+            f"• **Combined equity**: `${combined_equity:,.2f}`\n"
+            f"• **Combined starting capital**: `${combined_baseline:,.2f}`\n"
+            f"• **Overall P&L**: `{combined_money}` (`{combined_pct:+.2f}%`)"
+        )
+    else:
+        overall = "No account snapshots are available."
+    fields.insert(0, {"name": "🎯 Overall Performance", "value": overall, "inline": False})
+
+    processed_text = ", ".join(f"`{item}`" for item in processed_ids) or "none"
+    reporting_text = (
+        ", ".join(f"`{item}`" for item in reporting_only_ids) or "none"
+    )
+    payload = {
+        "username": "AI Stock Trader Bot",
+        "embeds": [{
+            "title": "📊 All-Account Portfolio Summary" + (" (DRY RUN)" if is_dry_run else ""),
+            "description": (
+                f"`{run_kind.upper()}` batch complete. "
+                f"Live orders were {'disabled' if is_dry_run else 'enabled'}.\n"
+                f"**Accounts used this batch:** {processed_text}\n"
+                f"**Reporting only:** {reporting_text}"
+            ),
+            "color": 0x3498DB if is_dry_run else 0x2ECC71,
+            "fields": fields,
+            "footer": {
+                "text": f"{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')} • account-scoped ledgers"
+            },
+        }],
+    }
+    try:
+        req = urllib.request.Request(
+            webhook_url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json", "User-Agent": "StockTraderBot/2.0"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req) as response:
+            if response.status in (200, 204):
+                print("✅ [DISCORD] Posted consolidated all-account summary.")
+                return True
+            logger.error("Discord summary failed with status %s", response.status)
+            return False
+    except Exception as exc:
+        logger.error("Failed to send consolidated Discord summary: %s", exc)
+        print(f"⚠️ [DISCORD] Failed consolidated account summary: {exc}")
+        return False

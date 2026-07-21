@@ -177,6 +177,8 @@ class BrokerExecutor:
             raise TypeError("BrokerExecutor accepts only a ValidatedExecutionPlan")
         if plan.account_number != self.account_number:
             raise ValueError("Execution plan account does not match executor account")
+        if plan.execution_mode == "PAPER":
+            raise ValueError("Paper execution plans can never reach BrokerExecutor")
         if datetime.now(UTC) > plan.expires_at:
             return ExecutionResult(
                 ExecutionStatus.ABORTED, (), reason="Execution plan expired"
@@ -286,6 +288,15 @@ class BrokerExecutor:
                 order_status=receipt.status,
                 requested_quantity=order.shares,
                 filled_quantity=receipt.filled_quantity,
+                account_id=plan.account_id,
+                trade_id=hashlib.sha256(
+                    f"{plan.decision_id}:{order.ticker}:{order.side}".encode()
+                ).hexdigest(),
+                execution_mode=plan.execution_mode,
+                fill_price=quotes[order.ticker].price,
+                fees_usd=0.0,
+                slippage_usd=0.0,
+                market_batch_id=plan.market_batch_id,
             )
 
         filled_receipts = [

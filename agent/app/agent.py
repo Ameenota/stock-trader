@@ -263,7 +263,18 @@ portfolio_stabilizer_loop = LoopAgent(
 )
 
 
-def _calculate_downside_risk(holdings: list[dict], *, account_number: str, dataset_id: str, now: datetime):
+def _calculate_downside_risk(
+    holdings: list[dict],
+    *,
+    account_number: str,
+    account_id: str = "real-48661",
+    execution_mode: str = "REAL_DRY_RUN",
+    policy_config=None,
+    policy_config_hash: str | None = None,
+    dataset_id: str,
+    now: datetime,
+    persist_state: bool = True,
+):
     """Fetch risk inputs through adapters and return fail-closed deterministic state."""
     from app.risk_controls import calculate_spy_regime, calculate_trailing_stop
     from app.tools.bigquery_service import get_last_buy_timestamp, upsert_position_risk_state
@@ -283,14 +294,19 @@ def _calculate_downside_risk(holdings: list[dict], *, account_number: str, datas
     }
     for holding in holdings:
         ticker = holding["symbol"]
-        entry_timestamp = get_last_buy_timestamp(ticker, dry_run=False, dataset_id=dataset_id)
+        entry_timestamp = get_last_buy_timestamp(
+            ticker,
+            dry_run=execution_mode != "LIVE",
+            dataset_id=dataset_id,
+            account_id=account_id,
+        )
         source = "CONFIRMED_LIVE_TRADE_HISTORY"
-        if entry_timestamp is None and ticker in reviewed_entries:
+        if execution_mode != "PAPER" and entry_timestamp is None and ticker in reviewed_entries:
             reviewed_timestamp, reviewed_quantity, reviewed_source = reviewed_entries[ticker]
             if abs(float(holding["shares"]) - reviewed_quantity) <= 1e-6:
                 entry_timestamp = reviewed_timestamp
                 source = reviewed_source
-        if entry_timestamp is None and ticker == "MU":
+        if execution_mode != "PAPER" and entry_timestamp is None and ticker == "MU":
             entry_timestamp = now
             source = "BOOTSTRAPPED_CURRENT_DATE"
         stop_result = None
@@ -300,13 +316,28 @@ def _calculate_downside_risk(holdings: list[dict], *, account_number: str, datas
             try:
                 history_days = max(60, (now - entry_timestamp).days + 60)
                 ticker_bars = fetch_completed_daily_history(ticker, now=now, calendar_days=history_days)
-                stop_result = calculate_trailing_stop(ticker, ticker_bars, entry_date=entry_timestamp.date())
+                stop_result = calculate_trailing_stop(
+                    ticker,
+                    ticker_bars,
+                    entry_date=entry_timestamp.date(),
+                    period=policy_config.atr_period if policy_config else 14,
+                    multiplier=policy_config.atr_multiplier if policy_config else 3.0,
+                    confirmation_closes=(
+                        policy_config.atr_confirmation_closes if policy_config else 1
+                    ),
+                    cancel_pending_exit_on_recovery=(
+                        policy_config.cancel_pending_exit_on_recovery
+                        if policy_config else False
+                    ),
+                )
             except Exception:
                 stop_result = None
-            if stop_result and stop_result.available:
+            if persist_state and stop_result and stop_result.available:
                 try:
                     upsert_position_risk_state(
                         account_suffix=str(account_number)[-5:],
+                        account_id=account_id,
+                        position_id=f"{account_id}:{ticker}:{entry_timestamp.isoformat()}",
                         ticker=ticker,
                         entry_timestamp=entry_timestamp,
                         last_session=stop_result.as_of_session,
@@ -315,6 +346,9 @@ def _calculate_downside_risk(holdings: list[dict], *, account_number: str, datas
                         atr=stop_result.atr,
                         breached=stop_result.breached,
                         source=source,
+                        confirmation_count=stop_result.confirmation_count,
+                        stop_state=stop_result.state,
+                        policy_config_hash=policy_config_hash,
                         dataset_id=dataset_id,
                     )
                 except Exception:
@@ -370,35 +404,99 @@ def _risk_required_proposal(holdings: list[dict], total_equity: float, overrides
 async def financial_analysis_pipeline(
     ranked_portfolio: list, 
     graveyard_rows: list | None = None, 
-    dataset_id: str = "portfolio_analytics"
+    dataset_id: str = "portfolio_analytics",
+    run_context=None,
 ) -> list:
     """Runs a multi-agent critique debate loop to finalize stock allocations,
     then executes trades using BrokerExecutor and logs snapshot/trades to BigQuery."""
     from app.tools.bigquery_service import get_historical_metrics
     from app.broker_executor import BrokerExecutor
+    from app.accounts import AccountType, ExecutionMode
     from app.tools.robinhood_service import fetch_robinhood_portfolio_state
 
     # 1. Fetch weekly historical signals log
     weekly_metrics = get_historical_metrics(days=7, dataset_id=dataset_id)
     
-    # Clear INTEGRATION_TEST to allow the Robinhood MCP toolset to connect
-    if "INTEGRATION_TEST" in os.environ:
-        del os.environ["INTEGRATION_TEST"]
+    account = run_context.account if run_context else None
+    account_id = account.account_id if account else "real-48661"
+    execution_mode = (
+        run_context.execution_mode.value if run_context else "REAL_DRY_RUN"
+    )
+    is_paper = execution_mode == ExecutionMode.PAPER.value
+    market_batch_id = run_context.market_batch_id if run_context else "legacy"
+    from zoneinfo import ZoneInfo
+    from app.tools.bigquery_service import execution_run_exists
 
-    # Resolve target account ending in 48661 from environment variables
-    account_number = os.environ.get("ROBINHOOD_ACCOUNT_NUMBER")
-    if not account_number:
-        if os.environ.get("SKIP_LIVE_TRADES", "true").lower() == "true":
-            account_number = "MOCK_ACCOUNT_48661"
+    run_label = run_context.run_kind.value.lower() if run_context else "execution"
+    market_date = datetime.now(timezone.utc).astimezone(
+        ZoneInfo("America/New_York")
+    ).date().isoformat()
+    decision_id = f"{market_date}-close-{account_id}-{run_label}"
+    if execution_run_exists(
+        decision_id,
+        execution_mode != ExecutionMode.LIVE.value,
+        dataset_id,
+        account_id=account_id,
+    ):
+        print(f"{CLR_YELLOW}[DUPLICATE] {decision_id} is already finalized; skipping account.{CLR_RESET}")
+        return ranked_portfolio
+
+    if is_paper:
+        from app.paper_executor import PaperHolding, PaperPortfolio, seed_paper_portfolio
+        from app.tools.bigquery_service import get_latest_account_snapshot
+        import json
+
+        print(f"\nLoading persistent paper portfolio for {account.display_name}...")
+        snapshot = get_latest_account_snapshot(account_id, dataset_id)
+        prices = {
+            str(item.get("ticker", "")).upper(): float(item["current_price"])
+            for item in ranked_portfolio
+            if item.get("current_price") is not None
+        }
+        if snapshot:
+            raw_holdings = json.loads(snapshot.get("holdings") or "[]")
+            paper_holdings = []
+            for item in raw_holdings:
+                ticker = str(item["symbol"]).upper()
+                if ticker not in prices:
+                    raise RuntimeError(f"Paper account {account_id} is missing a current price for {ticker}")
+                paper_holdings.append(
+                    PaperHolding(
+                        ticker,
+                        float(item["shares"]),
+                        float(item["average_buy_price"]),
+                        prices[ticker],
+                    )
+                )
+            paper_portfolio = PaperPortfolio(float(snapshot["total_cash"]), tuple(paper_holdings))
         else:
-            raise RuntimeError("Security Guardrail: ROBINHOOD_ACCOUNT_NUMBER environment variable is not set.")
-
-    if not account_number or not str(account_number).endswith("48661"):
-        raise RuntimeError(f"Security Guardrail: Unauthorized Robinhood account '{account_number}'. All operations restricted to accounts ending in 48661.")
-
-    # 2. Fetch current holdings and cash from Robinhood to initialize loop state
-    print("\nFetching current portfolio state from Robinhood...")
-    broker_state = await fetch_robinhood_portfolio_state(account_number)
+            paper_portfolio = seed_paper_portfolio(account.initial_cash)
+        account_number = "PAPER"
+        from app.tools.robinhood_service import BrokerHolding, BrokerPortfolioState
+        broker_state = BrokerPortfolioState(
+            account_number,
+            datetime.now(timezone.utc),
+            paper_portfolio.cash,
+            paper_portfolio.cash,
+            tuple(
+                BrokerHolding(item.symbol, item.shares, item.average_buy_price, item.current_price)
+                for item in paper_portfolio.holdings
+            ),
+        )
+    else:
+        # Clear INTEGRATION_TEST only for real accounts that require broker reads.
+        if "INTEGRATION_TEST" in os.environ:
+            del os.environ["INTEGRATION_TEST"]
+        account_number = os.environ.get("ROBINHOOD_ACCOUNT_NUMBER")
+        if not account_number:
+            if os.environ.get("SKIP_LIVE_TRADES", "true").lower() == "true":
+                account_number = "MOCK_ACCOUNT_48661"
+            else:
+                raise RuntimeError("Security Guardrail: ROBINHOOD_ACCOUNT_NUMBER environment variable is not set.")
+        if not str(account_number).endswith(account.broker_account_suffix if account else "48661"):
+            raise RuntimeError("Security Guardrail: configured broker identity does not match the selected account.")
+        print("\nFetching current portfolio state from Robinhood...")
+        broker_state = await fetch_robinhood_portfolio_state(account_number)
     total_cash = broker_state.cash
     buying_power = broker_state.buying_power
     holdings = [
@@ -417,16 +515,17 @@ async def financial_analysis_pipeline(
     total_equity = total_cash + holdings_value
     current_cash_pct = (total_cash / total_equity) * 100 if total_equity > 0 else 0.0
 
-    is_dry_run = os.environ.get("SKIP_LIVE_TRADES", "true").lower() == "true"
+    is_dry_run = execution_mode != ExecutionMode.LIVE.value
     
     # Calculate days_held for each holding from trade history
     from app.tools.bigquery_service import get_last_buy_timestamp, get_recent_trades
-    from datetime import datetime, timezone
-    
     now = datetime.now(timezone.utc)
     holdings_with_days = []
     for h in holdings:
-        last_buy = get_last_buy_timestamp(h["symbol"], dry_run=is_dry_run, dataset_id=dataset_id)
+        last_buy = get_last_buy_timestamp(
+            h["symbol"], dry_run=is_dry_run, dataset_id=dataset_id,
+            account_id=account_id,
+        )
         if last_buy:
             if last_buy.tzinfo is None:
                 last_buy = last_buy.replace(tzinfo=timezone.utc)
@@ -447,8 +546,13 @@ async def financial_analysis_pipeline(
     risk_overrides, trailing_stops, spy_regime = _calculate_downside_risk(
         holdings,
         account_number=account_number,
+        account_id=account_id,
+        execution_mode=execution_mode,
+        policy_config=account.policy_config if account else None,
+        policy_config_hash=account.policy_config_hash if account else None,
         dataset_id=dataset_id,
         now=now,
+        persist_state=not run_context or run_context.run_kind.value == "EXECUTION",
     )
     risk_context = {
         "spy_regime": spy_regime.__dict__ if spy_regime else {"available": False, "reason": "RISK_DATA_UNAVAILABLE"},
@@ -460,7 +564,9 @@ async def financial_analysis_pipeline(
     forced_proposal = _risk_required_proposal(holdings, total_equity, risk_overrides, spy_regime)
 
     # Fetch recent trades history
-    recent_trades = get_recent_trades(limit=10, dry_run=is_dry_run, dataset_id=dataset_id)
+    recent_trades = get_recent_trades(
+        limit=10, dry_run=is_dry_run, dataset_id=dataset_id, account_id=account_id
+    )
     recent_trades_str = str(recent_trades) if recent_trades else "No recent trade history found."
 
     # Build active watchlist summary containing EWMA, drawdown, volatility, and technicals
@@ -598,7 +704,7 @@ async def financial_analysis_pipeline(
         from app.trading_policy import POLICY_VERSION
         from zoneinfo import ZoneInfo
 
-        rejected_decision_id = f"{now.astimezone(ZoneInfo('America/New_York')).date().isoformat()}-close-{str(account_number)[-5:]}-{POLICY_VERSION}"
+        rejected_decision_id = f"{now.astimezone(ZoneInfo('America/New_York')).date().isoformat()}-close-{account_id}-{run_label}"
         try:
             insert_execution_run(
                 decision_id=rejected_decision_id,
@@ -609,6 +715,16 @@ async def financial_analysis_pipeline(
                 violations=[{"code": "ADVISOR_NOT_APPROVED"}],
                 proposal=approved_allocations,
                 dataset_id=dataset_id,
+                account_id=account_id,
+                run_kind=run_context.run_kind.value if run_context else "EXECUTION",
+                market_date=now.astimezone(ZoneInfo("America/New_York")).date().isoformat(),
+                execution_window="close",
+                market_batch_id=market_batch_id,
+                execution_mode=execution_mode,
+                requested_live=not is_dry_run,
+                policy_name=account.policy_name if account else "p0",
+                policy_config=account.policy_config.as_dict() if account else None,
+                policy_config_hash=account.policy_config_hash if account else None,
             )
         except Exception as exc:
             print(f"{CLR_YELLOW}Warning: Failed to audit rejected execution run: {exc}{CLR_RESET}")
@@ -619,7 +735,6 @@ async def financial_analysis_pipeline(
     dry_run_report_path = None
     if is_dry_run:
         import json
-        from datetime import datetime
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         dry_run_filename = f"dry_run_results_{timestamp}.json"
         proposal_dict = {}
@@ -685,17 +800,13 @@ async def financial_analysis_pipeline(
             decision_map[ticker] = {"signal": signal, "thesis": thesis}
 
     from app.trading_policy import AssetPolicyMetrics, HoldingState, POLICY_VERSION, RiskOverride, validate_pretrade_plan
-    from app.tools.bigquery_service import execution_run_exists, insert_execution_run, update_execution_run
+    from app.tools.bigquery_service import claim_execution_run, update_execution_run
     from app.tools.ticker_universe import get_allowed_tickers
     from zoneinfo import ZoneInfo
 
     market_date = now.astimezone(ZoneInfo("America/New_York")).date().isoformat()
-    decision_id = f"{market_date}-close-{str(account_number)[-5:]}-{POLICY_VERSION}"
-    try:
-        already_executed = execution_run_exists(decision_id, is_dry_run, dataset_id)
-    except Exception as exc:
-        print(f"{CLR_RED}[POLICY REJECTED] Duplicate-run protection unavailable: {exc}{CLR_RESET}")
-        return ranked_portfolio
+    decision_id = f"{market_date}-close-{account_id}-{run_label}"
+    already_executed = False
 
     holding_policy = [
         HoldingState(
@@ -756,6 +867,9 @@ async def financial_analysis_pipeline(
         allowed_tickers=set(get_allowed_tickers()),
         already_executed=already_executed,
         now=now,
+        account_id=account_id,
+        execution_mode=execution_mode,
+        market_batch_id=market_batch_id,
     )
     if dry_run_report_path:
         try:
@@ -780,7 +894,7 @@ async def financial_analysis_pipeline(
                 json.dump(dry_run_report, report_file, indent=2)
         except Exception as exc:
             print(f"{CLR_YELLOW}Warning: Failed to append policy result to dry-run report: {exc}{CLR_RESET}")
-    insert_execution_run(
+    claimed = claim_execution_run(
         decision_id=decision_id,
         dry_run=is_dry_run,
         policy_version=POLICY_VERSION,
@@ -789,7 +903,20 @@ async def financial_analysis_pipeline(
         violations=[violation.__dict__ for violation in policy_decision.violations],
         proposal=approved_allocations,
         dataset_id=dataset_id,
+        account_id=account_id,
+        run_kind=run_context.run_kind.value if run_context else "EXECUTION",
+        market_date=market_date,
+        execution_window="close",
+        market_batch_id=market_batch_id,
+        execution_mode=execution_mode,
+        requested_live=not is_dry_run,
+        policy_name=account.policy_name if account else "p0",
+        policy_config=account.policy_config.as_dict() if account else None,
+        policy_config_hash=account.policy_config_hash if account else None,
     )
+    if not claimed:
+        print(f"{CLR_RED}[DUPLICATE] Execution window already claimed for {account_id}.{CLR_RESET}")
+        return ranked_portfolio
     if not policy_decision.allowed or policy_decision.plan is None:
         print(f"{CLR_RED}[POLICY REJECTED] {policy_decision.reason_codes}{CLR_RESET}")
         return ranked_portfolio
@@ -803,13 +930,56 @@ async def financial_analysis_pipeline(
             item["thesis"] = decision_map[ticker]["thesis"]
         item["target_weight"] = allocation_map.get(ticker, 0.0)
 
-    # 4. Instantiate BrokerExecutor and run broker execution
+    # 4. Route the validated plan to exactly one execution adapter.
     print(f"\n{CLR_BOLD}{CLR_GREEN}💸 [PHASE: 5. Execution & Portfolio Rebalancing]{CLR_RESET}")
-    print(f"   Connecting to Robinhood MCP tools for target account ending in 48661...")
-    controller = BrokerExecutor(toolset=robinhood_toolset, account_number=account_number, dataset_id=dataset_id)
-    update_execution_run(decision_id, is_dry_run, "EXECUTING", dataset_id=dataset_id)
+    from app.broker_executor import ExecutionResult, ExecutionStatus
+
+    update_execution_run(
+        decision_id, is_dry_run, "EXECUTING", dataset_id=dataset_id,
+        account_id=account_id,
+    )
     try:
-        execution_result = await controller.execute_rebalance(policy_decision.plan)
+        if run_context and run_context.run_kind.value == "ADVISORY":
+            execution_result = ExecutionResult(
+                ExecutionStatus.COMPLETED, (), reason="Advisory run; no ledger mutation"
+            )
+        elif is_paper:
+            from app.paper_executor import execute_paper_rebalance
+            from app.tools.bigquery_service import commit_paper_execution
+
+            print(f"   Executing persistent paper ledger for {account.display_name}...")
+            paper_result = execute_paper_rebalance(
+                plan=policy_decision.plan,
+                portfolio=paper_portfolio,
+                prices={
+                    str(item.get("ticker", "")).upper(): float(item["current_price"])
+                    for item in ranked_portfolio
+                    if item.get("current_price") is not None
+                },
+            )
+            summary_str = (
+                proposal.get("summary") if isinstance(proposal, dict)
+                else getattr(proposal, "summary", None)
+            )
+            commit_paper_execution(
+                account=account,
+                decision_id=decision_id,
+                market_batch_id=market_batch_id,
+                result=paper_result,
+                summary=summary_str,
+                dataset_id=dataset_id,
+            )
+            execution_result = ExecutionResult(
+                ExecutionStatus.COMPLETED, (), reason="Persistent paper execution committed"
+            )
+        else:
+            print("   Connecting to Robinhood MCP tools for target account ending in 48661...")
+            controller = BrokerExecutor(
+                toolset=robinhood_toolset,
+                account_number=account_number,
+                dataset_id=dataset_id,
+            )
+            execution_result = await controller.execute_rebalance(policy_decision.plan)
     except Exception as exc:
         update_execution_run(
             decision_id,
@@ -817,39 +987,50 @@ async def financial_analysis_pipeline(
             "ABORTED",
             execution_result={"error": str(exc)},
             dataset_id=dataset_id,
+            account_id=account_id,
         )
         try:
             from app.app_utils.discord_notifier import send_discord_webhook
-            send_discord_webhook(
-                summary=f"🚨 TRADING RUN FAILED CLOSED: {exc}",
-                approved_allocations=approved_allocations,
-                decisions=decisions,
-                is_dry_run=is_dry_run,
-            )
+            if not (run_context and run_context.suppress_account_notification):
+                send_discord_webhook(
+                    summary=f"🚨 TRADING RUN FAILED CLOSED: {exc}",
+                    approved_allocations=approved_allocations,
+                    decisions=decisions,
+                    is_dry_run=is_dry_run,
+                )
         except Exception as notify_exc:
             print(f"{CLR_YELLOW}Warning: Failed to send critical Discord notification: {notify_exc}{CLR_RESET}")
-        return ranked_portfolio
-    update_execution_run(
-        decision_id,
-        is_dry_run,
-        execution_result.status.value,
-        execution_result=execution_result.__dict__,
-        dataset_id=dataset_id,
-    )
+        raise RuntimeError(f"Execution failed closed for {account_id}: {exc}") from exc
+    if not is_paper or (run_context and run_context.run_kind.value == "ADVISORY"):
+        update_execution_run(
+            decision_id,
+            is_dry_run,
+            execution_result.status.value,
+            execution_result=execution_result.__dict__,
+            dataset_id=dataset_id,
+            account_id=account_id,
+        )
     print(f"{CLR_BOLD}{CLR_GREEN}💸 [PHASE: 5. Exit]{CLR_RESET}")
 
     # 5. Log post-trade portfolio snapshot to BigQuery
     print(f"\n{CLR_CYAN}Logging portfolio snapshot to BigQuery...{CLR_RESET}")
     try:
-        from app.tools.robinhood_service import log_portfolio_snapshot
-        summary_str = None
-        if proposal:
-            if isinstance(proposal, dict):
-                summary_str = proposal.get("summary")
-            else:
-                summary_str = getattr(proposal, "summary", None)
-        await log_portfolio_snapshot(summary=summary_str, dataset_id=dataset_id)
-        print(f"   {CLR_GREEN}Portfolio snapshot logged successfully.{CLR_RESET}")
+        if is_paper or (run_context and run_context.run_kind.value == "ADVISORY"):
+            print(f"   {CLR_GREEN}Snapshot handled by selected non-broker mode.{CLR_RESET}")
+        else:
+            from app.tools.robinhood_service import log_portfolio_snapshot
+            summary_str = None
+            if proposal:
+                if isinstance(proposal, dict):
+                    summary_str = proposal.get("summary")
+                else:
+                    summary_str = getattr(proposal, "summary", None)
+            await log_portfolio_snapshot(
+                summary=summary_str, dataset_id=dataset_id, account_id=account_id,
+                decision_id=decision_id, market_batch_id=market_batch_id,
+                policy_config_hash=account.policy_config_hash if account else None,
+            )
+            print(f"   {CLR_GREEN}Portfolio snapshot logged successfully.{CLR_RESET}")
     except Exception as e:
         print(f"   {CLR_YELLOW}Warning: Failed to log portfolio snapshot: {e}{CLR_RESET}")
 
@@ -861,10 +1042,13 @@ async def financial_analysis_pipeline(
         all_rows_to_log = list(ranked_portfolio) + rows_to_log
         
         # Override the timestamp to ensure the recommendations match the current snapshot time
-        from datetime import datetime, timezone
         current_time_str = datetime.now(timezone.utc).isoformat()
         for item in all_rows_to_log:
             item["timestamp"] = current_time_str
+            item["record_scope"] = "ACCOUNT_DECISION"
+            item["account_id"] = account_id
+            item["decision_id"] = decision_id
+            item["market_batch_id"] = market_batch_id
             
         insert_sentiment(all_rows_to_log, dataset_id=dataset_id)
         print(f"   {CLR_GREEN}Unified market metrics and execution logs written to BigQuery successfully.{CLR_RESET}")
@@ -885,12 +1069,13 @@ async def financial_analysis_pipeline(
                 f"🚨 TRADING RUN FAILED CLOSED: {execution_result.status.value}. "
                 f"{execution_result.reason or 'See execution audit for details.'}"
             )
-        send_discord_webhook(
-            summary=summary_str or "Daily portfolio optimization complete.",
-            approved_allocations=approved_allocations,
-            decisions=decisions,
-            is_dry_run=is_dry_run
-        )
+        if not (run_context and run_context.suppress_account_notification):
+            send_discord_webhook(
+                summary=summary_str or "Daily portfolio optimization complete.",
+                approved_allocations=approved_allocations,
+                decisions=decisions,
+                is_dry_run=is_dry_run
+            )
     except Exception as e:
         print(f"   {CLR_YELLOW}Warning: Failed to send Discord notification: {e}{CLR_RESET}")
 

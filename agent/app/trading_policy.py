@@ -125,6 +125,9 @@ class ValidatedExecutionPlan:
     allocations: Mapping[str, float]
     planned_trades: tuple[PlannedTrade, ...]
     policy_version: str = POLICY_VERSION
+    account_id: str | None = None
+    execution_mode: str = "REAL_DRY_RUN"
+    market_batch_id: str | None = None
     _token: object = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -146,6 +149,9 @@ class ValidatedExecutionPlan:
         expires_at: datetime,
         allocations: Mapping[str, float],
         planned_trades: Sequence[PlannedTrade],
+        account_id: str | None = None,
+        execution_mode: str = "REAL_DRY_RUN",
+        market_batch_id: str | None = None,
     ) -> ValidatedExecutionPlan:
         return cls(
             decision_id=decision_id,
@@ -154,6 +160,9 @@ class ValidatedExecutionPlan:
             expires_at=expires_at,
             allocations=allocations,
             planned_trades=tuple(planned_trades),
+            account_id=account_id,
+            execution_mode=execution_mode,
+            market_batch_id=market_batch_id,
             _token=_PLAN_TOKEN,
         )
 
@@ -198,6 +207,9 @@ def validate_pretrade_plan(
     already_executed: bool,
     now: datetime,
     metrics_max_age: timedelta = timedelta(hours=36),
+    account_id: str | None = None,
+    execution_mode: str = "REAL_DRY_RUN",
+    market_batch_id: str | None = None,
 ) -> PolicyDecision:
     """Validate a complete proposal. Any violation cancels the entire plan."""
     now = _aware(now, "now")
@@ -224,7 +236,12 @@ def validate_pretrade_plan(
                 "DUPLICATE_DECISION_ID", "This decision has already executed."
             )
         )
-    if not str(account_number).strip().endswith("48661"):
+    if execution_mode == "PAPER":
+        if not account_id:
+            violations.append(
+                PolicyViolation("UNAUTHORIZED_ACCOUNT", "Paper plans require account_id.")
+            )
+    elif not str(account_number).strip().endswith("48661"):
         violations.append(
             PolicyViolation("UNAUTHORIZED_ACCOUNT", "The account is not authorized.")
         )
@@ -488,6 +505,9 @@ def validate_pretrade_plan(
         expires_at=now + timedelta(minutes=5),
         allocations=normalized,
         planned_trades=planned,
+        account_id=account_id,
+        execution_mode=execution_mode,
+        market_batch_id=market_batch_id,
     )
     return PolicyDecision(
         allowed=True,

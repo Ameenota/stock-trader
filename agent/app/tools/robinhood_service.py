@@ -286,7 +286,14 @@ async def fetch_robinhood_portfolio_state(account_number: str, *, toolset=None) 
     return BrokerPortfolioState(account_number, datetime.now(timezone.utc), cash, buying_power, holdings)
 
 
-async def log_portfolio_snapshot(summary: str | None = None, dataset_id: str = "portfolio_analytics") -> None:
+async def log_portfolio_snapshot(
+    summary: str | None = None,
+    dataset_id: str = "portfolio_analytics",
+    account_id: str = "real-48661",
+    decision_id: str | None = None,
+    market_batch_id: str | None = None,
+    policy_config_hash: str | None = None,
+) -> None:
     """Queries Robinhood portfolio cash and positions, and logs a snapshot to BigQuery."""
     import json
     from app.tools.bigquery_service import insert_portfolio_snapshot
@@ -329,7 +336,13 @@ async def log_portfolio_snapshot(summary: str | None = None, dataset_id: str = "
         "unrealized_gain_loss": unrealized_gain_loss,
         "unrealized_gain_loss_percent": unrealized_gain_loss_percent,
         "holdings": json.dumps(holdings),
-        "summary": summary
+        "summary": summary,
+        "account_id": account_id,
+        "snapshot_id": f"{account_id}:{decision_id or datetime.now(timezone.utc).isoformat()}",
+        "snapshot_type": "BROKER_CONFIRMED",
+        "decision_id": decision_id,
+        "market_batch_id": market_batch_id,
+        "policy_config_hash": policy_config_hash,
     }
 
     insert_portfolio_snapshot(snapshot, dataset_id=dataset_id)

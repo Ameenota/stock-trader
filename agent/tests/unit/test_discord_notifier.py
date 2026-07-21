@@ -13,9 +13,13 @@
 # limitations under the License.
 
 import os
+import json
 import unittest
 from unittest.mock import patch, MagicMock
-from app.app_utils.discord_notifier import send_discord_webhook
+from app.app_utils.discord_notifier import (
+    send_accounts_summary_webhook,
+    send_discord_webhook,
+)
 
 class TestDiscordNotifier(unittest.TestCase):
     
@@ -40,6 +44,57 @@ class TestDiscordNotifier(unittest.TestCase):
         
         self.assertTrue(result)
         mock_urlopen.assert_called_once()
+
+    @patch("urllib.request.urlopen")
+    @patch.dict(os.environ, {"DISCORD_WEBHOOK_URL": "https://discord.com/api/webhooks/mock"})
+    def test_all_account_summary_includes_combined_performance(self, mock_urlopen):
+        mock_response = MagicMock()
+        mock_response.status = 204
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+        accounts = [
+            {
+                "account_id": "real-48661",
+                "display_name": "Robinhood $100", "account_type": "REAL",
+                "status": "ACTIVE", "initial_cash": 100.0,
+                "total_equity": 90.0, "total_cash": 60.0,
+                "holdings": [{"symbol": "MU"}], "run_status": "PROCESSED",
+                "policy_name": "atr-immediate-exit",
+                "decision_id": "2026-07-21-close-real-48661-execution",
+                "decision_status": "COMPLETED",
+                "recommendation": [{"ticker": "SNDK", "weight_pct": 0.30}],
+                "trades": [{
+                    "ticker": "MU", "action": "SELL", "amount_usd": 25.0,
+                    "filled_quantity": 0.025,
+                }],
+            },
+            {
+                "account_id": "exp-paper-a",
+                "display_name": "Paper A", "account_type": "PAPER",
+                "status": "PAUSED", "initial_cash": 10_000.0,
+                "total_equity": 10_100.0, "total_cash": 9_970.0,
+                "holdings": [{"symbol": "META"}], "run_status": "NOT RUN",
+                "policy_name": "atr-confirmed-exit",
+            },
+        ]
+        assert send_accounts_summary_webhook(
+            accounts, run_kind="execution", is_dry_run=True
+        )
+        request = mock_urlopen.call_args.args[0]
+        payload = json.loads(request.data)
+        embed = payload["embeds"][0]
+        assert embed["title"] == "📊 All-Account Portfolio Summary (DRY RUN)"
+        assert "`2/2`" in embed["fields"][0]["value"]
+        assert "$10,190.00" in embed["fields"][0]["value"]
+        assert "`+$90.00` (`+0.89%`)" in embed["fields"][0]["value"]
+        assert "**Accounts used this batch:** `real-48661`" in embed["description"]
+        assert "**Reporting only:** `exp-paper-a`" in embed["description"]
+        assert embed["fields"][1]["name"] == "🟢 REAL · Robinhood $100"
+        assert "**Account ID**: `real-48661`" in embed["fields"][1]["value"]
+        assert "**Used this batch**: `YES` (`PROCESSED`)" in embed["fields"][1]["value"]
+        assert "**Recommended target**: `SNDK 30.0%, CASH 70.0%`" in embed["fields"][1]["value"]
+        assert "**Orders for that decision**: `SELL MU 0.0250 sh (~$25.00)`" in embed["fields"][1]["value"]
+        assert embed["fields"][2]["name"] == "🧪 PAPER · Paper A"
+        assert "**Used this batch**: `NO` (`NOT RUN`)" in embed["fields"][2]["value"]
         
     @patch("urllib.request.urlopen")
     def test_send_discord_webhook_missing_url(self, mock_urlopen):
@@ -84,4 +139,3 @@ class TestDiscordNotifier(unittest.TestCase):
         
         self.assertTrue(result)
         mock_urlopen.assert_called_once()
-

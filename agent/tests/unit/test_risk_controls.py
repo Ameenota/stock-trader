@@ -66,6 +66,35 @@ def test_close_below_prior_stop_breaches_but_new_stop_does_not_look_ahead():
     assert breached.breached
 
 
+def test_two_close_confirmation_cancels_pending_exit_on_recovery():
+    base = [(100, 99, 99.5)] * 14
+    raised = [*base, (110, 109, 109.5)]
+    recovered = calculate_trailing_stop(
+        "MU",
+        bars([*raised, (100, 98, 99), (112, 108, 111)]),
+        entry_date=date(2026, 1, 14),
+        confirmation_closes=2,
+        cancel_pending_exit_on_recovery=True,
+    )
+    assert not recovered.breached
+    assert recovered.confirmation_count == 0
+    assert recovered.state == "ACTIVE"
+
+
+def test_two_consecutive_closes_confirm_exit():
+    base = [(100, 99, 99.5)] * 14
+    raised = [*base, (110, 109, 109.5)]
+    confirmed = calculate_trailing_stop(
+        "MU",
+        bars([*raised, (100, 98, 99), (99, 97, 98)]),
+        entry_date=date(2026, 1, 14),
+        confirmation_closes=2,
+        cancel_pending_exit_on_recovery=True,
+    )
+    assert confirmed.breached
+    assert confirmed.state == "EXIT_CONFIRMED"
+
+
 def test_incomplete_current_bar_is_excluded():
     now = datetime(2026, 7, 20, 19, 0, tzinfo=UTC)  # 15:00 New York
     frame = pd.DataFrame(
