@@ -471,11 +471,20 @@ def validate_pretrade_plan(
             )
         )
 
-    max_order_notional = (
-        min(0.35 * equity, float(os.environ.get("MAX_ORDER_NOTIONAL_USD", "35.00")))
-        if equity
-        else 0.0
-    )
+    if execution_mode == "PAPER":
+        # Paper ledgers scale with their own configured capital. The absolute
+        # broker cap exists to protect the small real account and must not leak
+        # into independent simulations.
+        max_order_notional = 0.35 * equity
+    else:
+        max_order_notional = (
+            min(
+                0.35 * equity,
+                float(os.environ.get("MAX_ORDER_NOTIONAL_USD", "35.00")),
+            )
+            if equity
+            else 0.0
+        )
     if equity:
         for trade in planned:
             if trade.action is TradeAction.HOLD:

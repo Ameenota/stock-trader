@@ -184,6 +184,18 @@ def test_order_notional_cap_is_enforced():
     )
 
 
+def test_paper_order_cap_scales_with_paper_equity():
+    decision = validate(
+        [{"ticker": "MU", "weight_pct": 0.30}],
+        total_equity=10_000,
+        account_number="PAPER",
+        account_id="exp-paper",
+        execution_mode="PAPER",
+    )
+    assert decision.allowed
+    assert decision.planned_trades[0].delta_weight == pytest.approx(0.30)
+
+
 def test_plan_cannot_be_constructed_directly():
     with pytest.raises(TypeError, match="must be created"):
         ValidatedExecutionPlan(

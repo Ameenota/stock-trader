@@ -177,7 +177,9 @@ This section provides all necessary setup, run, and deployment details to run th
   snapshot rather than a fabricated trade.
   With `SKIP_LIVE_TRADES=true`, active `PAPER` accounts commit fills to their
   persistent simulated ledgers, while `REAL` accounts are restricted to
-  `REAL_DRY_RUN`; no Robinhood order can be submitted.
+  `REAL_DRY_RUN`; no Robinhood order can be submitted. Paper order limits scale
+  with paper equity, while the small real account retains its absolute broker
+  notional cap.
 * **Run Pipeline Skipping Ingestion (Dry-run Debugging)**: Bypass scraping and go straight to execution using cached today's BigQuery metrics:
   ```bash
   cd agent
