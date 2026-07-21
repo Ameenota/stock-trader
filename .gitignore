@@ -21,3 +21,7 @@ agent/scratch/
 
 # Dry run results
 **/dry_run_results_*.json
+
+# Local Medium article drafts
+/docs/medium_building_an_autonomous_stock_trader.md
+/docs/medium_stabilizing_agents_with_deterministic_code.md
