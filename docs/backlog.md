@@ -2,7 +2,7 @@
 
 This is the canonical engineering and strategy backlog for the stock trader. Items are ordered by expected impact on capital safety and risk-adjusted performance, not by implementation ease.
 
-Last reviewed: 2026-07-21
+Last reviewed: 2026-07-22
 
 Detailed implementation sequence for P0 items 1–4: `docs/p0_live_readiness_implementation_plan.md`.
 
@@ -202,21 +202,32 @@ Detailed account-scoped experimentation, migration, failure, and test plan: `doc
   - Adding a small lot does not silently relock older shares.
   - Partial sales select lots using a documented rule and preserve correct remaining ages.
 
-### 11. Improve sentiment data quality and prove incremental value
+### 11. Replace routine LLM sentiment analysis with FinBERT and prove incremental value
 
 - Priority: P2
-- Status: Proposed
+- Status: Ready
 - Impact: Medium
-- Problem: Headline sentiment is noisy and a second LLM does not by itself prove predictive value.
+- Standalone model design: `docs/tickerrank_standalone_model_plan.md` specifies the proposed ticker-conditioned relevance, importance, and direction model, dataset construction, human evaluation, and Hugging Face release workflow. It is intended for a separate repository; adoption by this trading system remains subject to the shadow and walk-forward promotion gates below.
+- Problem: The current sentiment agent sends every news-bearing ticker's titles and full summaries to `gemini-flash-latest`, asks the model to generate both scores and theses, and does not record token usage. This consumes unnecessary LLM tokens, reprocesses duplicate or previously seen stories, and still does not prove that generative sentiment adds predictive value.
 - Work:
-  - Deduplicate syndicated stories and cross-ticker copies.
+  - Implement FinBERT in this repository as the primary classifier for routine financial-news sentiment; pin and audit the exact model/revision rather than downloading a mutable latest revision at runtime.
+  - Normalize and fingerprint articles, deduplicate syndicated stories and cross-ticker copies, and cache article-level classifications by content hash plus classifier version so retries and overlapping news windows do not spend tokens or recompute unchanged results.
+  - Classify each new article once, retain positive/neutral/negative probabilities, and aggregate article scores into ticker scores with deterministic source, recency, and event-type weights.
+  - Preserve the existing active-watchlist, no-news decay, and weekend bypasses.
+  - Use Gemini only as an auditable fallback for low-confidence, contradictory, or decision-relevant cases. Send a bounded set of deduplicated headlines rather than full summaries, return only structured scores/evidence identifiers, and generate routine thesis text deterministically.
+  - Record FinBERT inference counts, Gemini fallback counts, input/output tokens, cache hit rate, latency, classifier version, fallback reason, and estimated cost with each market batch.
+  - Run FinBERT and the current Gemini classifier in shadow mode on identical point-in-time inputs before promotion; document score disagreement, threshold crossings, and downstream entry/exit differences while `SKIP_LIVE_TRADES=true`.
   - Weight sources and article age; distinguish earnings, guidance, analyst actions, legal events, and general sector news.
   - Add deterministic earnings surprises and estimate revisions where available.
-  - Compare no-sentiment, single-model, and consensus variants in walk-forward evaluation.
-  - Add dual-model divergence handling only if it improves out-of-sample results after costs.
+  - Compare no-sentiment, FinBERT-only, Gemini-only, and FinBERT-with-Gemini-fallback variants in walk-forward evaluation using identical inputs and cost assumptions.
+  - Tune the fallback-confidence threshold from evaluation evidence rather than account-specific code; review any trading-policy threshold change separately.
 - Acceptance criteria:
-  - Sentiment variants are compared on the same point-in-time test window.
-  - The selected variant demonstrates incremental risk-adjusted value and stable turnover.
+  - Repeated classification of identical normalized articles produces identical cached results, and a cross-ticker duplicate is classified only once.
+  - A representative market batch uses FinBERT for all high-confidence routine articles and reduces measured Gemini sentiment input tokens by at least 80% versus the current implementation.
+  - Gemini fallback input is bounded, excludes full article summaries, and every fallback has a stable reason code and token/cost audit.
+  - Unit tests cover normalization, fingerprinting, cache invalidation by model version, score aggregation, confidence boundaries, contradictory headlines, no-news decay, and deterministic thesis generation.
+  - Shadow results report score error/disagreement and every changed deterministic entry or exit decision before FinBERT becomes authoritative.
+  - Sentiment variants are compared on the same point-in-time test window, and the selected hybrid demonstrates incremental risk-adjusted value and stable turnover after inference and trading costs; otherwise sentiment is removed from entry ranking rather than retained by assumption.
 
 ### 12. Strengthen operational observability and reconciliation
 
