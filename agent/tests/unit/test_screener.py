@@ -56,6 +56,38 @@ async def test_determine_active_watchlist_with_owned_holdings(mock_ticker_class,
 @patch("app.tools.bigquery_service.get_recently_sold_tickers")
 @patch("app.tools.bigquery_service.get_latest_portfolio_holdings")
 @patch("app.tools.ticker_universe.yf.Ticker")
+async def test_required_paper_holding_survives_shared_screen(
+    mock_ticker_class, mock_get_holdings, mock_get_recently_sold
+):
+    """A holding from a non-default account must receive full daily analysis."""
+    mock_get_holdings.return_value = []
+    mock_get_recently_sold.return_value = []
+
+    def mock_history_side_effect(ticker):
+        mock_ticker = MagicMock()
+        prices = [100.0] * 60
+        if ticker == "META":
+            prices[-1] = 80.0
+        mock_ticker.history.return_value = pd.DataFrame({"Close": prices})
+        return mock_ticker
+
+    mock_ticker_class.side_effect = mock_history_side_effect
+
+    watchlist, details = await determine_active_watchlist(
+        dataset_id="test_dataset",
+        return_details=True,
+        required_tickers=["META"],
+    )
+
+    assert watchlist[0] == "META"
+    assert details["META"]["status"] == "SELECTED"
+    assert details["META"]["reason"] == "Owned position promotion"
+
+
+@pytest.mark.asyncio
+@patch("app.tools.bigquery_service.get_recently_sold_tickers")
+@patch("app.tools.bigquery_service.get_latest_portfolio_holdings")
+@patch("app.tools.ticker_universe.yf.Ticker")
 async def test_determine_active_watchlist_filters_sma_and_sorts_momentum(mock_ticker_class, mock_get_holdings, mock_get_recently_sold):
     """Verify that candidates below 50d SMA are filtered, and valid candidates are ranked by momentum."""
     # No owned holdings

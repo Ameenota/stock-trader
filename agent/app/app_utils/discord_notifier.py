@@ -205,6 +205,13 @@ def send_accounts_summary_webhook(
     for account in accounts:
         account_id = str(account["account_id"])
         run_status = str(account.get("run_status", "NOT SELECTED"))
+        attempted = run_status in {"PROCESSED", "FAILED"}
+        batch_result = {
+            "PROCESSED": "SUCCEEDED",
+            "FAILED": "FAILED",
+            "NOT RUN": "NOT RUN",
+            "NOT SELECTED": "NOT SELECTED",
+        }.get(run_status, run_status)
         if run_status in {"PROCESSED", "FAILED"}:
             processed_ids.append(account_id)
         else:
@@ -264,18 +271,24 @@ def send_accounts_summary_webhook(
         decision_id = account.get("decision_id")
         decision_status = account.get("decision_status") or "UNKNOWN"
         activity = (
-            f"• **Latest decision**: `{decision_id}` (`{decision_status}`)\n"
+            f"• **Latest saved decision**: `{decision_id}` (`{decision_status}`)\n"
             f"• **Recommended target**: `{targets_text}`\n"
-            f"• **Orders for that decision**: `{trades_text}`\n"
+            f"• **Orders saved for that decision**: `{trades_text}`\n"
             if decision_id
-            else "• **Latest decision**: `NONE`\n"
+            else "• **Latest saved decision**: `NONE`\n"
         )
+        batch_error = account.get("run_error")
+        batch_text = (
+            f"• **Attempted this batch**: `{'YES' if attempted else 'NO'}`\n"
+            f"• **Batch result**: `{batch_result}`\n"
+        )
+        if batch_error:
+            batch_text += f"• **Batch error**: `{str(batch_error)[:300]}`\n"
         performance = (
             f"• **Account ID**: `{account_id}`\n"
             f"• **Ledger type**: `{account['account_type']}`\n"
             f"• **Account status**: `{account['status']}`\n"
-            f"• **Used this batch**: `{'YES' if run_status in {'PROCESSED', 'FAILED'} else 'NO'}`"
-            f" (`{run_status}`)\n"
+            f"{batch_text}"
             f"{activity}"
             f"{performance}\n"
             f"• **Holdings**: `{symbols}`"
@@ -317,7 +330,7 @@ def send_accounts_summary_webhook(
             "description": (
                 f"`{run_kind.upper()}` batch complete. "
                 f"Live orders were {'disabled' if is_dry_run else 'enabled'}.\n"
-                f"**Accounts used this batch:** {processed_text}\n"
+                f"**Accounts attempted this batch:** {processed_text}\n"
                 f"**Reporting only:** {reporting_text}"
             ),
             "color": 0x3498DB if is_dry_run else 0x2ECC71,

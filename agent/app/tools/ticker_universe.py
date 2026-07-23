@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import asyncio
-from typing import List
+from typing import Iterable, List
 import yfinance as yf
 
 # ==============================================================================
@@ -71,14 +71,19 @@ def get_active_tickers() -> List[str]:
     return ACTIVE_TICKERS
 
 
-async def determine_active_watchlist(dataset_id: str = "portfolio_analytics", return_details: bool = False) -> List[str] | tuple:
-    """Dynamically screens the 41-stock TICKER_UNIVERSE to build a refined 11-stock active watchlist.
+async def determine_active_watchlist(
+    dataset_id: str = "portfolio_analytics",
+    return_details: bool = False,
+    required_tickers: Iterable[str] | None = None,
+) -> List[str] | tuple:
+    """Dynamically screen the universe, always retaining required held tickers.
 
     Logic:
-    1. Force-include any stock that we currently hold positions in (queried from BigQuery).
+    1. Force-include required account holdings and the default real-account holdings.
     2. Filter out non-owned stocks that are trading below their 50-day Simple Moving Average (SMA).
     3. Score the remaining stocks by momentum (current_price / 50-day SMA) and take the top performers.
     4. Pad the watchlist with the original ACTIVE_TICKERS list if it contains fewer than 11 stocks.
+       If more than 11 unique holdings are required, retain every holding and expand the list.
     """
     from app.tools.bigquery_service import get_latest_portfolio_holdings, get_recently_sold_tickers
 
@@ -90,8 +95,17 @@ async def determine_active_watchlist(dataset_id: str = "portfolio_analytics", re
     except Exception:
         owned_tickers = []
 
-    # Filter owned tickers to make sure they are within our allowed universe
+    required = [
+        str(ticker).strip().upper()
+        for ticker in (required_tickers or [])
+        if ticker and str(ticker).strip()
+    ]
+
+    # Preserve order while combining account-scoped holdings with the legacy default
+    # real-account lookup. Every held ticker must remain in the analysis path.
+    owned_tickers = list(dict.fromkeys(required + owned_tickers))
     owned_tickers = [t for t in owned_tickers if t in TICKER_UNIVERSE]
+    watchlist_limit = max(11, len(owned_tickers))
 
     # 2. Retrieve recently sold tickers from BQ trade history to prevent immediate repurchase (cooling-down)
     try:
@@ -161,13 +175,13 @@ async def determine_active_watchlist(dataset_id: str = "portfolio_analytics", re
     final_watchlist = []
 
     for t in owned_tickers + top_candidate_tickers:
-        if t not in watchlist_set and len(final_watchlist) < 11:
+        if t not in watchlist_set and len(final_watchlist) < watchlist_limit:
             watchlist_set.add(t)
             final_watchlist.append(t)
 
     # 7. Pad with the static core watch list (ACTIVE_TICKERS) if we have fewer than 11 stocks
     for t in ACTIVE_TICKERS:
-        if t not in recently_sold and t not in watchlist_set and len(final_watchlist) < 11:
+        if t not in recently_sold and t not in watchlist_set and len(final_watchlist) < watchlist_limit:
             watchlist_set.add(t)
             final_watchlist.append(t)
 

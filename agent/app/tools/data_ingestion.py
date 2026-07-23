@@ -368,7 +368,10 @@ def print_portfolio_table(portfolio: list) -> None:
     print("="*175 + "\n")
 
 
-async def run_sentiment_analysis_pipeline(dataset_id: str = "portfolio_analytics") -> tuple[list, list]:
+async def run_sentiment_analysis_pipeline(
+    dataset_id: str = "portfolio_analytics",
+    required_tickers: List[str] | None = None,
+) -> tuple[list, list]:
     """Ingests market news/metrics, runs sentiment analysis agent, ranks assets,
     and logs decisions to BigQuery.
     """
@@ -385,7 +388,11 @@ async def run_sentiment_analysis_pipeline(dataset_id: str = "portfolio_analytics
     # 1. Dynamically determine the watchlist and get details for all universe assets
     print(f"\n{CLR_BOLD}{CLR_CYAN}📥 [PHASE: 2. Ingestion & Watchlist Screening]{CLR_RESET}")
     print("   Determining active watchlist from 40-asset universe...")
-    active_tickers, all_tickers_details = await determine_active_watchlist(dataset_id=dataset_id, return_details=True)
+    active_tickers, all_tickers_details = await determine_active_watchlist(
+        dataset_id=dataset_id,
+        return_details=True,
+        required_tickers=required_tickers,
+    )
     print(f"   Active watchlist generated: {active_tickers}")
     print(f"   Ingesting news & metrics from Yahoo Finance for watchlist tickers...")
 

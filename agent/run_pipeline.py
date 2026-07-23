@@ -62,6 +62,7 @@ from app.tools.bigquery_service import (
     get_latest_account_activity,
     get_latest_account_snapshot,
     get_latest_market_metrics,
+    get_latest_portfolio_holdings,
     list_accounts,
     seed_account_registry,
     setup_bigquery,
@@ -102,6 +103,20 @@ def _market_batch_id(rows: list[dict]) -> str:
     return hashlib.sha256(material.encode()).hexdigest()
 
 
+def _required_account_tickers(accounts: list, dataset_id: str) -> list[str]:
+    """Return every held ticker that must survive the shared pre-screen."""
+    required = {
+        ticker.strip().upper()
+        for account in accounts
+        for ticker in get_latest_portfolio_holdings(
+            dataset_id=dataset_id,
+            account_id=account.account_id,
+        )
+        if ticker and ticker.strip()
+    }
+    return sorted(required)
+
+
 async def run_pipeline(
     *,
     selected_account_id: str | None = None,
@@ -132,6 +147,9 @@ async def run_pipeline(
             f"     - {account.display_name} ({account.account_id}, {account.account_type.value}) "
             f"=> {modes[account.account_id].value}"
         )
+    required_tickers = _required_account_tickers(selected, dataset_id)
+    if required_tickers:
+        print(f"   Held tickers required in today's analysis: {required_tickers}")
 
     # Determine if we skip ingestion (from env or if BQ today has records)
     skip_ingestion = os.environ.get("SKIP_INGESTION", "false").lower() == "true"
@@ -151,7 +169,10 @@ async def run_pipeline(
 
     if not skip_ingestion:
         # Run daily analysis pipeline helper from data_ingestion tool
-        ranked_portfolio, graveyard_rows = await run_sentiment_analysis_pipeline(dataset_id=dataset_id)
+        ranked_portfolio, graveyard_rows = await run_sentiment_analysis_pipeline(
+            dataset_id=dataset_id,
+            required_tickers=required_tickers,
+        )
 
     market_batch_id = _market_batch_id(ranked_portfolio)
     failures: list[tuple[str, str]] = []
@@ -184,7 +205,8 @@ async def run_pipeline(
             import json
             from app.app_utils.discord_notifier import send_accounts_summary_webhook
 
-            failure_ids = {account_id for account_id, _ in failures}
+            failure_reasons = dict(failures)
+            failure_ids = set(failure_reasons)
             selected_ids = {account.account_id for account in selected}
             summary_rows = []
             for account in list_accounts(dataset_id=dataset_id):
@@ -212,6 +234,7 @@ async def run_pipeline(
                         else "PROCESSED" if account.account_id in selected_ids
                         else "NOT RUN"
                     ),
+                    "run_error": failure_reasons.get(account.account_id),
                 })
             send_accounts_summary_webhook(
                 summary_rows,

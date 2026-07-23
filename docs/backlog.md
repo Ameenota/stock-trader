@@ -257,6 +257,8 @@ Detailed account-scoped experimentation, migration, failure, and test plan: `doc
 
 ## Completed work
 
+- 2026-07-22 — Completed account-complete held-position ingestion and clearer batch reporting. The shared pre-screen now force-includes the union of holdings from every selected account, so a paper holding cannot lose valuation, sentiment, risk, or policy inputs merely because it was filtered out of the default real account's watchlist. Consolidated Discord summaries now separate whether an account was attempted, whether that attempt succeeded, the current batch error, and the latest previously saved decision. Regression coverage includes a filtered META paper holding and the failed-batch message contract. Verification: 123 tests passed in the restricted full-suite run (the only two failures were network authentication); the network-backed ADK integration subset then passed 3/3 with network access.
+
 Completed historical items remain documented in the root `TODO.md` until they are migrated with their verification evidence. New work and status changes belong in this file.
 
 ## Backlog maintenance

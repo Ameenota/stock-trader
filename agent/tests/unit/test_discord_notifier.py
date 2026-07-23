@@ -86,15 +86,52 @@ class TestDiscordNotifier(unittest.TestCase):
         assert "`2/2`" in embed["fields"][0]["value"]
         assert "$10,190.00" in embed["fields"][0]["value"]
         assert "`+$90.00` (`+0.89%`)" in embed["fields"][0]["value"]
-        assert "**Accounts used this batch:** `real-48661`" in embed["description"]
+        assert "**Accounts attempted this batch:** `real-48661`" in embed["description"]
         assert "**Reporting only:** `exp-paper-a`" in embed["description"]
         assert embed["fields"][1]["name"] == "🟢 REAL · Robinhood $100"
         assert "**Account ID**: `real-48661`" in embed["fields"][1]["value"]
-        assert "**Used this batch**: `YES` (`PROCESSED`)" in embed["fields"][1]["value"]
+        assert "**Attempted this batch**: `YES`" in embed["fields"][1]["value"]
+        assert "**Batch result**: `SUCCEEDED`" in embed["fields"][1]["value"]
         assert "**Recommended target**: `SNDK 30.0%, CASH 70.0%`" in embed["fields"][1]["value"]
-        assert "**Orders for that decision**: `SELL MU 0.0250 sh (~$25.00)`" in embed["fields"][1]["value"]
+        assert "**Orders saved for that decision**: `SELL MU 0.0250 sh (~$25.00)`" in embed["fields"][1]["value"]
         assert embed["fields"][2]["name"] == "🧪 PAPER · Paper A"
-        assert "**Used this batch**: `NO` (`NOT RUN`)" in embed["fields"][2]["value"]
+        assert "**Attempted this batch**: `NO`" in embed["fields"][2]["value"]
+        assert "**Batch result**: `NOT RUN`" in embed["fields"][2]["value"]
+
+    @patch("urllib.request.urlopen")
+    @patch.dict(os.environ, {"DISCORD_WEBHOOK_URL": "https://discord.com/api/webhooks/mock"})
+    def test_failed_batch_shows_error_separately_from_saved_decision(self, mock_urlopen):
+        mock_response = MagicMock()
+        mock_response.status = 204
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+        accounts = [{
+            "account_id": "exp-atr-confirmation",
+            "display_name": "ATR Two-Close Confirmation",
+            "account_type": "PAPER",
+            "status": "ACTIVE",
+            "initial_cash": 10_000.0,
+            "total_equity": 10_000.0,
+            "total_cash": 7_000.0,
+            "holdings": [{"symbol": "META"}],
+            "run_status": "FAILED",
+            "run_error": "Missing current price for META",
+            "policy_name": "atr-confirmed-exit",
+            "decision_id": "2026-07-21-close-exp-atr-confirmation-execution",
+            "decision_status": "COMPLETED",
+            "recommendation": [{"ticker": "META", "weight_pct": 0.30}],
+            "trades": [],
+        }]
+
+        assert send_accounts_summary_webhook(
+            accounts, run_kind="execution", is_dry_run=True
+        )
+        request = mock_urlopen.call_args.args[0]
+        payload = json.loads(request.data)
+        value = payload["embeds"][0]["fields"][1]["value"]
+        assert "**Attempted this batch**: `YES`" in value
+        assert "**Batch result**: `FAILED`" in value
+        assert "**Batch error**: `Missing current price for META`" in value
+        assert "**Latest saved decision**:" in value
         
     @patch("urllib.request.urlopen")
     def test_send_discord_webhook_missing_url(self, mock_urlopen):
