@@ -245,7 +245,7 @@ Detailed account-scoped experimentation, migration, failure, and test plan: `doc
   - One run can be reconstructed end to end without parsing console prose.
   - Dashboard and alerts never label a recommendation or simulated order as an executed fill.
   - Scheduled runs cannot create datasets or tables, alter schemas, seed accounts, or execute legacy backfills.
-- Partial implementation evidence (2026-07-23): `setup_bq.py` now exclusively owns BigQuery provisioning, account seeding, and legacy backfills. `run_pipeline.py` and its `--list-accounts` path no longer import or invoke those administrative operations. Focused setup and CLI tests passed 8/8.
+- Partial implementation evidence (2026-07-23): `setup_bq.py` now exclusively owns BigQuery provisioning, account seeding, and legacy backfills. `run_pipeline.py` and its `--list-accounts` path no longer import or invoke those administrative operations. Focused setup and CLI tests passed 8/8. A network-enabled `SKIP_LIVE_TRADES=true --all-accounts --run-kind execution` run then completed all three accounts without startup provisioning, posted the consolidated Discord summary, and sent the final Uptime Kuma heartbeat.
 
 ### 13. Add account selection and experiment comparison to the dashboard
 
