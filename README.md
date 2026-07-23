@@ -190,6 +190,11 @@ This section provides all necessary setup, run, and deployment details to run th
   cd agent
   SKIP_LIVE_TRADES=true uv run run_pipeline.py --list-accounts
   ```
+* **Set up or migrate BigQuery**: Run explicitly during initial setup or after a schema migration; normal pipeline runs do not provision or migrate BigQuery:
+  ```bash
+  cd agent
+  uv run setup_bq.py
+  ```
 * **Run Streamlit Dashboard Locally**:
   ```bash
   cd frontend
@@ -233,7 +238,7 @@ The frontend Streamlit app is containerized via `frontend/Dockerfile` and serves
     * `execution_runs`: Policy decisions, reason codes, execution status, and reconciliation results.
     * `position_risk_state`: Monotonic ATR stop state for open positions.
     * `accounts`: Friendly account registry, brokerless paper/real account type, dashboard default, live eligibility, and validated policy JSON/hash.
-  - Initialized automatically on startup via `setup_bigquery()` in [bigquery_service.py](file:///Users/sagar/Documents/ML/stock-trader/agent/app/tools/bigquery_service.py).
+  - Provisioned explicitly with `uv run setup_bq.py`; scheduled pipeline runs only perform operational reads and writes.
   - IAM Permissions: Make sure the service account running the Cloud Run Streamlit dashboard has `BigQuery Admin` or `BigQuery Data Editor` + `BigQuery Job User` roles.
 
 ---

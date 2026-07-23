@@ -19,6 +19,7 @@ import hashlib
 import os
 import sys
 from datetime import datetime, timezone
+from urllib.request import urlopen
 
 # Terminal colors for beautiful outputs
 CLR_RESET = "\033[0m"
@@ -57,15 +58,12 @@ load_env_file()
 os.environ["INTEGRATION_TEST"] = "TRUE"
 
 from app.tools.bigquery_service import (
-    backfill_account_scope,
     get_account,
     get_latest_account_activity,
     get_latest_account_snapshot,
     get_latest_market_metrics,
     get_latest_portfolio_holdings,
     list_accounts,
-    seed_account_registry,
-    setup_bigquery,
 )
 from app.accounts import AccountRunContext, RunKind, preflight_accounts
 from app.tools.data_ingestion import print_portfolio_table, run_sentiment_analysis_pipeline
@@ -117,6 +115,22 @@ def _required_account_tickers(accounts: list, dataset_id: str) -> list[str]:
     return sorted(required)
 
 
+def ping_uptime_kuma() -> bool:
+    """Notify Uptime Kuma only after the pipeline completes successfully."""
+    ping_url = os.environ.get("UPTIME_KUMA")
+    if not ping_url:
+        print(f"{CLR_RED}UPTIME_KUMA is not configured; completion ping was not sent.{CLR_RESET}")
+        return False
+    try:
+        with urlopen(ping_url, timeout=10):
+            pass
+    except Exception as exc:
+        print(f"{CLR_RED}Uptime Kuma completion ping failed: {exc}{CLR_RESET}")
+        return False
+    print(f"{CLR_GREEN}Uptime Kuma completion ping sent.{CLR_RESET}")
+    return True
+
+
 async def run_pipeline(
     *,
     selected_account_id: str | None = None,
@@ -126,14 +140,8 @@ async def run_pipeline(
 ) -> int:
     print(f"{CLR_BOLD}{CLR_BLUE}[{datetime.now(timezone.utc).isoformat()}] Starting AI Infrastructure Analyst pipeline...{CLR_RESET}")
 
-    # Step 1: Initialize BigQuery Dataset and Tables
-    print(f"\n{CLR_BOLD}{CLR_CYAN}🗄️ [PHASE: 1. Setup BigQuery Database]{CLR_RESET}")
-    print(f"   Initializing BigQuery dataset '{dataset_id}' and validating schemas...")
-    setup_bigquery(dataset_id=dataset_id)
-    seed_account_registry(dataset_id=dataset_id)
-    backfill_account_scope(dataset_id=dataset_id)
-    print(f"   {CLR_GREEN}BigQuery verification complete.{CLR_RESET}")
-
+    # Step 1: Load the configured accounts from the already-provisioned dataset.
+    print(f"\n{CLR_BOLD}{CLR_CYAN}🗄️ [PHASE: 1. Load Account Configuration]{CLR_RESET}")
     selected = (
         list_accounts(active_only=True, dataset_id=dataset_id)
         if all_accounts
@@ -249,15 +257,13 @@ async def run_pipeline(
             print(f"  - {account_id}: {reason}")
         return 1
     print(f"\n{CLR_BOLD}{CLR_GREEN}🚀 [PHASE: Complete] All selected accounts finalized.{CLR_RESET}")
-    return 0
+    return 0 if ping_uptime_kuma() else 1
 
 if __name__ == "__main__":
     cli_parser = build_parser()
     cli_args = cli_parser.parse_args()
     _validate_args(cli_parser, cli_args)
     if cli_args.list_accounts:
-        setup_bigquery(dataset_id=cli_args.dataset_id)
-        seed_account_registry(dataset_id=cli_args.dataset_id)
         for item in list_accounts(dataset_id=cli_args.dataset_id):
             print(
                 f"{item.account_id}\t{item.display_name}\t{item.account_type.value}\t"

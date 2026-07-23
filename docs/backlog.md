@@ -2,7 +2,7 @@
 
 This is the canonical engineering and strategy backlog for the stock trader. Items are ordered by expected impact on capital safety and risk-adjusted performance, not by implementation ease.
 
-Last reviewed: 2026-07-22
+Last reviewed: 2026-07-23
 
 Detailed implementation sequence for P0 items 1–4: `docs/p0_live_readiness_implementation_plan.md`.
 
@@ -240,9 +240,12 @@ Detailed account-scoped experimentation, migration, failure, and test plan: `doc
   - Distinguish recommendations, submitted orders, accepted orders, fills, rejects, dry-run orders, and current holdings.
   - Alert on stale data, empty universes, missing fields, debate exhaustion, execution uncertainty, and reconciliation mismatch.
   - Record strategy/config version with every decision.
+  - Keep BigQuery provisioning, account seeding, and legacy backfills out of scheduled pipeline execution.
 - Acceptance criteria:
   - One run can be reconstructed end to end without parsing console prose.
   - Dashboard and alerts never label a recommendation or simulated order as an executed fill.
+  - Scheduled runs cannot create datasets or tables, alter schemas, seed accounts, or execute legacy backfills.
+- Partial implementation evidence (2026-07-23): `setup_bq.py` now exclusively owns BigQuery provisioning, account seeding, and legacy backfills. `run_pipeline.py` and its `--list-accounts` path no longer import or invoke those administrative operations. Focused setup and CLI tests passed 8/8.
 
 ### 13. Add account selection and experiment comparison to the dashboard
 
