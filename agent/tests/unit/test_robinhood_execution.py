@@ -350,8 +350,8 @@ def test_direct_executor_rejects_bad_account():
 
 @pytest.mark.asyncio
 async def test_direct_executor_rejects_ticker_outside_central_allowlist():
-    toolset = make_toolset(quote_response=quotes({"AAPL": 100}))
-    validated = plan([{"ticker": "AAPL", "weight_pct": 0.3}], allowed_tickers={"AAPL"})
+    toolset = make_toolset(quote_response=quotes({"ZZZZ": 100}))
+    validated = plan([{"ticker": "ZZZZ", "weight_pct": 0.3}], allowed_tickers={"ZZZZ"})
     with patch.dict(os.environ, {"SKIP_LIVE_TRADES": "false"}):
         with pytest.raises(ValueError, match="outside the authorized"):
             await BrokerExecutor(toolset, "MOCK_ACCOUNT_48661").execute_rebalance(

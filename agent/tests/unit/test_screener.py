@@ -15,7 +15,20 @@
 import pytest
 import pandas as pd
 from unittest.mock import MagicMock, patch
-from app.tools.ticker_universe import determine_active_watchlist, TICKER_UNIVERSE, ACTIVE_TICKERS
+from app.tools.ticker_universe import (
+    ACTIVE_TICKERS,
+    MAX_ACTIVE_WATCHLIST_SIZE,
+    TICKER_SECTORS,
+    TICKER_UNIVERSE,
+    determine_active_watchlist,
+)
+
+
+def test_universe_is_multi_sector_and_fallback_remains_capped():
+    assert len(TICKER_UNIVERSE) >= 120
+    assert len(set(TICKER_SECTORS.values())) >= 11
+    assert len(ACTIVE_TICKERS) == MAX_ACTIVE_WATCHLIST_SIZE
+    assert len({TICKER_SECTORS[ticker] for ticker in ACTIVE_TICKERS}) >= 8
 
 
 @pytest.mark.asyncio
@@ -43,7 +56,7 @@ async def test_determine_active_watchlist_with_owned_holdings(mock_ticker_class,
     # Verify owned tickers are forced into the watchlist first
     assert "META" in watchlist
     assert "MSFT" in watchlist
-    assert len(watchlist) == 11
+    assert len(watchlist) == MAX_ACTIVE_WATCHLIST_SIZE
     
     # Assert all items are unique
     assert len(set(watchlist)) == 11
@@ -133,7 +146,36 @@ async def test_determine_active_watchlist_filters_sma_and_sorts_momentum(mock_ti
     assert watchlist[1] == "GOOGL"
 
     # Watchlist must still be padded to exactly 11 tickers
-    assert len(watchlist) == 11
+    assert len(watchlist) == MAX_ACTIVE_WATCHLIST_SIZE
+
+
+@pytest.mark.asyncio
+@patch("app.tools.bigquery_service.get_recently_sold_tickers")
+@patch("app.tools.bigquery_service.get_latest_portfolio_holdings")
+@patch("app.tools.ticker_universe.yf.Ticker")
+async def test_candidate_watchlist_is_sector_balanced_and_capped(
+    mock_ticker_class, mock_get_holdings, mock_get_recently_sold
+):
+    mock_get_holdings.return_value = []
+    mock_get_recently_sold.return_value = []
+
+    def mock_history_side_effect(ticker):
+        mock_ticker = MagicMock()
+        # Every ticker passes. Earlier catalog entries have equal momentum, so
+        # the per-sector gate—not incidental network order—must diversify them.
+        mock_ticker.history.return_value = pd.DataFrame({"Close": [100.0] * 60})
+        return mock_ticker
+
+    mock_ticker_class.side_effect = mock_history_side_effect
+    watchlist = await determine_active_watchlist(dataset_id="test_dataset")
+
+    assert len(watchlist) == MAX_ACTIVE_WATCHLIST_SIZE
+    sector_counts = {}
+    for ticker in watchlist:
+        sector = TICKER_SECTORS[ticker]
+        sector_counts[sector] = sector_counts.get(sector, 0) + 1
+    assert max(sector_counts.values()) <= 2
+    assert len(sector_counts) >= 6
 
 
 @pytest.mark.asyncio
@@ -159,7 +201,7 @@ async def test_determine_active_watchlist_filters_recently_sold(mock_ticker_clas
     # NVDA and AMD should NOT be in the watchlist because they were recently sold
     assert "NVDA" not in watchlist
     assert "AMD" not in watchlist
-    assert len(watchlist) == 11
+    assert len(watchlist) == MAX_ACTIVE_WATCHLIST_SIZE
     
     # Assert they are filtered in details with correct reason
     assert details["NVDA"]["status"] == "FILTERED"

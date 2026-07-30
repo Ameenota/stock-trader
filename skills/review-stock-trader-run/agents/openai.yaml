@@ -1,0 +1,4 @@
+interface:
+  display_name: "Review Stock Trader Run"
+  short_description: "Summarize daily pipeline logs safely"
+  default_prompt: "Use $review-stock-trader-run to summarize today’s stock-trader pipeline run."

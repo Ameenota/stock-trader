@@ -58,7 +58,6 @@ load_env_file()
 os.environ["INTEGRATION_TEST"] = "TRUE"
 
 from app.tools.bigquery_service import (
-    get_account,
     get_latest_account_activity,
     get_latest_account_snapshot,
     get_latest_market_metrics,
@@ -115,6 +114,24 @@ def _required_account_tickers(accounts: list, dataset_id: str) -> list[str]:
     return sorted(required)
 
 
+def _resolve_available_accounts(
+    *, selected_account_id: str | None, all_accounts: bool, dataset_id: str
+) -> list:
+    """Resolve pipeline accounts exclusively from the active registry set."""
+    available = list_accounts(active_only=True, dataset_id=dataset_id)
+    if all_accounts:
+        return available
+    selected = [
+        account for account in available
+        if account.account_id == (selected_account_id or "")
+    ]
+    if len(selected) != 1:
+        raise LookupError(
+            f"Expected exactly one active account row for {selected_account_id!r}"
+        )
+    return selected
+
+
 def ping_uptime_kuma() -> bool:
     """Notify Uptime Kuma only after the pipeline completes successfully."""
     ping_url = os.environ.get("UPTIME_KUMA")
@@ -142,10 +159,10 @@ async def run_pipeline(
 
     # Step 1: Load the configured accounts from the already-provisioned dataset.
     print(f"\n{CLR_BOLD}{CLR_CYAN}🗄️ [PHASE: 1. Load Account Configuration]{CLR_RESET}")
-    selected = (
-        list_accounts(active_only=True, dataset_id=dataset_id)
-        if all_accounts
-        else [get_account(selected_account_id or "", dataset_id=dataset_id)]
+    selected = _resolve_available_accounts(
+        selected_account_id=selected_account_id,
+        all_accounts=all_accounts,
+        dataset_id=dataset_id,
     )
     skip_live_trades = os.environ.get("SKIP_LIVE_TRADES", "true").lower() == "true"
     modes = preflight_accounts(selected, skip_live_trades=skip_live_trades)
@@ -217,7 +234,7 @@ async def run_pipeline(
             failure_ids = set(failure_reasons)
             selected_ids = {account.account_id for account in selected}
             summary_rows = []
-            for account in list_accounts(dataset_id=dataset_id):
+            for account in selected:
                 snapshot = get_latest_account_snapshot(account.account_id, dataset_id)
                 activity = get_latest_account_activity(account.account_id, dataset_id)
                 raw_holdings = (snapshot or {}).get("holdings") or "[]"

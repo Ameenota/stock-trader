@@ -8,7 +8,7 @@ Related backlog items: account-scoped execution safety, stable cron decisions, c
 
 This plan did not itself authorize a deployment, database migration, or live trading. The user subsequently authorized implementation and the additive BigQuery migration on 2026-07-21. No deployment occurred and every verification pipeline command explicitly used `SKIP_LIVE_TRADES=true`. The installed `--all-accounts --run-kind execution` cron interface is implemented. Promoting a policy to a real account or setting `SKIP_LIVE_TRADES=false` remains a separate explicit human action.
 
-Implementation status (2026-07-21): complete for the initial account registry, shared paper ledger, ATR policy experiment, CLI/cron contract, dashboard isolation, migration, deterministic test plan, and consolidated Discord reporting. BigQuery contains `real-48661`, `exp-atr-immediate`, and `exp-atr-confirmation`; all have `live_execution_allowed=false`. At the user's direction, the temporary `$100` paper histories were deleted and both accounts were cleanly seeded at `$10,000`. The deterministic policy exposed and rejected an inherited `$35` real-account order cap; paper limits now scale to 35% of paper equity while the real broker cap is unchanged. Each paper account then completed one `$3,000` META fill and holds `$7,000` cash, with exactly `$10,000` equity. All-account runs send one Discord summary containing every registry account, its performance versus `initial_cash`, latest targets/orders, and combined performance. The user authorized activating both paper experiments without waiting for a frontend deployment and explicitly accepted the legacy dashboard risk. Both paper accounts are `ACTIVE`, brokerless, and simulation-only. The existing generic agents-cli eval harness remains unable to serialize the `ToolContext` parameter on `analyze_and_rank_portfolio`; this does not affect deterministic execution or the successful network-backed ADK integration tests.
+Implementation status (updated 2026-07-28): complete for the account registry, shared paper ledger, ATR policy experiment, CLI/cron contract, dashboard isolation, migration, deterministic test plan, and consolidated Discord reporting. The initial `exp-atr-immediate` and `exp-atr-confirmation` cohort is archived with history preserved. The active cohort is `exp-broad-atr-immediate-v1` and `exp-broad-atr-confirmation-v1`; both are brokerless, simulation-only, seeded at `$10,000`, and have empty ledgers and risk state before their first multi-sector run. All registry accounts retain `live_execution_allowed=false`, exactly one active real account remains the dashboard default, and `--all-accounts` selects the real dry-run account plus the two active broad-universe experiments. The two new policy configurations differ only in ATR confirmation and recovery behavior. The existing generic agents-cli eval harness remains unable to serialize the `ToolContext` parameter on `analyze_and_rank_portfolio`; this does not affect deterministic execution or the successful network-backed ADK integration tests.
 
 Current operating contract: the installed `--all-accounts --run-kind execution` cron must retain `SKIP_LIVE_TRADES=true`. Active paper accounts mutate only their persistent simulated ledgers. The real account resolves to `REAL_DRY_RUN`, may record simulated recommendations/orders for comparison, and cannot submit a Robinhood order. Same-day finalized decisions are not replayed. Both clean `$10,000` paper ledgers have completed their initial 30% META allocation.
 
@@ -199,8 +199,10 @@ Initial rows should be reviewed explicitly. Suggested IDs:
 ```text
 real-48661             Robinhood $100                 REAL
 legacy-real-shadow     Legacy Robinhood Dry Runs      PAPER/ARCHIVED
-exp-atr-immediate      ATR Immediate Exit             PAPER
-exp-atr-confirmation   ATR Two-Close Confirmation     PAPER
+exp-atr-immediate              ATR Immediate Exit             PAPER/ARCHIVED
+exp-atr-confirmation           ATR Two-Close Confirmation     PAPER/ARCHIVED
+exp-broad-atr-immediate-v1     Broad Universe ATR Immediate   PAPER
+exp-broad-atr-confirmation-v1  Broad Universe ATR Two-Close   PAPER
 ```
 
 Do not seed experimental rows as active until the paper-ledger implementation and UI isolation tests pass.
@@ -449,8 +451,8 @@ The list output includes account ID, friendly name, type, status, policy name/ve
 Add an explicit run kind:
 
 ```bash
-uv run run_pipeline.py --account exp-atr-confirmation --run-kind advisory
-uv run run_pipeline.py --account exp-atr-confirmation --run-kind execution
+uv run run_pipeline.py --account exp-broad-atr-confirmation-v1 --run-kind advisory
+uv run run_pipeline.py --account exp-broad-atr-confirmation-v1 --run-kind execution
 ```
 
 Recommended eventual schedule:
@@ -664,7 +666,7 @@ Exit criteria:
 1. Key stop state by account and position generation.
 2. Wire validated policy JSON into ATR calculation and confirmation transitions.
 3. Snapshot effective JSON/hash into every run.
-4. Seed `exp-atr-immediate` and `exp-atr-confirmation` only after repository/executor tests pass.
+4. Seed versioned immediate and confirmation experiment accounts only after repository/executor tests pass; archive prior cohorts without deleting their histories.
 5. Run both experiments from identical point-in-time market batches.
 
 Exit criteria:

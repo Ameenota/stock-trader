@@ -5,6 +5,7 @@ import pytest
 
 from run_pipeline import (
     _required_account_tickers,
+    _resolve_available_accounts,
     _validate_args,
     build_parser,
     ping_uptime_kuma,
@@ -39,16 +40,42 @@ def test_list_accounts_rejects_selector():
 def test_required_account_tickers_unions_selected_account_holdings(mock_holdings):
     mock_holdings.side_effect = lambda *, account_id, dataset_id: {
         "real-48661": ["MU"],
-        "exp-atr-confirmation": ["META"],
-        "exp-atr-immediate": ["meta"],
+        "exp-broad-atr-confirmation-v1": ["META"],
+        "exp-broad-atr-immediate-v1": ["meta"],
     }[account_id]
     accounts = [
         SimpleNamespace(account_id="real-48661"),
-        SimpleNamespace(account_id="exp-atr-confirmation"),
-        SimpleNamespace(account_id="exp-atr-immediate"),
+        SimpleNamespace(account_id="exp-broad-atr-confirmation-v1"),
+        SimpleNamespace(account_id="exp-broad-atr-immediate-v1"),
     ]
 
     assert _required_account_tickers(accounts, "test_dataset") == ["META", "MU"]
+
+
+@patch("run_pipeline.list_accounts")
+def test_resolve_available_accounts_uses_only_active_registry_rows(mock_list_accounts):
+    real = SimpleNamespace(account_id="real-48661")
+    paper = SimpleNamespace(account_id="paper-active")
+    mock_list_accounts.return_value = [real, paper]
+
+    assert _resolve_available_accounts(
+        selected_account_id=None, all_accounts=True, dataset_id="test_dataset"
+    ) == [real, paper]
+    assert _resolve_available_accounts(
+        selected_account_id="paper-active",
+        all_accounts=False,
+        dataset_id="test_dataset",
+    ) == [paper]
+    with pytest.raises(LookupError, match="active account row"):
+        _resolve_available_accounts(
+            selected_account_id="archived",
+            all_accounts=False,
+            dataset_id="test_dataset",
+        )
+    assert all(
+        call.kwargs == {"active_only": True, "dataset_id": "test_dataset"}
+        for call in mock_list_accounts.call_args_list
+    )
 
 
 @patch.dict("os.environ", {"UPTIME_KUMA": "http://uptime-kuma.test/push"}, clear=False)

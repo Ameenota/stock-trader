@@ -13,62 +13,141 @@
 # limitations under the License.
 
 import asyncio
+from collections import Counter
 from typing import Iterable, List
 import yfinance as yf
 
 # ==============================================================================
-# DESIGN REASONING FOR THE TWO TICKER LISTS:
+# DESIGN REASONING FOR THE UNIVERSE AND ACTIVE WATCHLIST:
 #
-# 1. TICKER_UNIVERSE (Allowed 40-Stock Universe):
+# 1. TICKER_UNIVERSE (Versioned multi-sector research/trading universe):
 #    - Purpose: Enforces security boundaries. This acts as a strict security "allow list"
 #      that the agent is authorized to trade on Robinhood. If the agent attempts to trade
 #      any ticker outside of this list, the double guardrail interceptor will block it.
-#    - Target: High-quality, large-cap, liquid stocks inside the AI and power grid sector.
+#    - Target: A curated set of liquid large-cap companies across every major equity
+#      sector. The catalog remains checked in and reviewed so a third-party constituent
+#      change cannot silently broaden the broker allowlist.
 #
-# 2. ACTIVE_TICKERS (Default 10-Stock Watch List):
+# 2. ACTIVE_TICKERS (Default 11-Stock Watch List):
 #    - Purpose: Minimizes API token usage and optimizes execution performance.
-#      Instead of fetching news and running expensive LLM sentiment analysis on all 40
-#      stocks every single day, we default to running sentiment analysis only on a active watch list
-#      of 10 stocks.
-#    - Link between the two: The Dynamic Asset Screener (determine_active_watchlist) scans the
-#      40-stock TICKER_UNIVERSE using cheap/free price calculations and promotes the top 10
-#      performing tickers to become the active watch list for today's run.
+#      Instead of fetching news and running expensive LLM sentiment analysis on the
+#      entire universe, the deterministic screener promotes at most 11 tickers (unless
+#      more held positions require safety analysis). Expanding the research universe
+#      therefore does not expand the normal sentiment-analysis watchlist.
 # ==============================================================================
 
-# Centralized allowed universe of 42 AI sector and grid infrastructure stocks (including Rocket Lab)
-TICKER_UNIVERSE = [
-    # 1. Original 10 Core Assets (AI core/infrastructure + hedge ETF fallback)
-    "NVDA", "AMD", "TSM", "MU", "SMCI", "DELL", "VRT", "ETN", "CEG", "TLT",
-    # 2. Big Tech Cloud & LLM Providers
-    "MSFT", "GOOGL", "AMZN", "META", "ORCL",
-    # 3. Custom ASICs, Networking & Design Tools
-    "AVGO", "ANET", "ARM", "SNPS", "CDNS",
-    # 4. Semiconductor Manufacturing Equipment & Memory
-    "ASML", "AMAT", "LRCX", "KLAC", "INTC", "SNDK",
-    # 5. Datacenter Utilities & Infrastructure
-    "VST", "GE", "MRVL", "HPE",
-    # 6. AI Software & Integration Services
-    "PLTR", "IBM", "NOW", "ADBE", "SAP",
-    # 7. Edge Inference & Monitoring
-    "NET", "DDOG", "SNOW",
-    # 8. AI-driven Security & Edge Devices
-    "CRWD", "PANW", "QCOM",
-    # 9. Space Infrastructure & Aerospace
-    "RKLB"
-]
+# This metadata is intentionally static and versioned. It is not fetched from a mutable
+# index-membership webpage during a trading run.
+UNIVERSE_VERSION = "multi-sector-large-cap-v1"
+MAX_ACTIVE_WATCHLIST_SIZE = 11
+MAX_CANDIDATES_PER_SECTOR = 2
+MAX_CONCURRENT_PRICE_FETCHES = 12
 
-# Currently active subset for daily ingestion and sentiment analysis to optimize token usage
+TICKER_SECTORS = {
+    # Information Technology
+    "AAPL": "Information Technology", "MSFT": "Information Technology",
+    "NVDA": "Information Technology", "AVGO": "Information Technology",
+    "ORCL": "Information Technology", "CRM": "Information Technology",
+    "AMD": "Information Technology", "ADBE": "Information Technology",
+    "CSCO": "Information Technology", "ACN": "Information Technology",
+    "IBM": "Information Technology", "NOW": "Information Technology",
+    "INTU": "Information Technology", "QCOM": "Information Technology",
+    "TXN": "Information Technology", "AMAT": "Information Technology",
+    "ADI": "Information Technology", "MU": "Information Technology",
+    "LRCX": "Information Technology", "KLAC": "Information Technology",
+    "ANET": "Information Technology", "PANW": "Information Technology",
+    "CRWD": "Information Technology", "SNPS": "Information Technology",
+    "CDNS": "Information Technology", "MCHP": "Information Technology",
+    "NXPI": "Information Technology", "INTC": "Information Technology",
+    "DELL": "Information Technology", "HPE": "Information Technology",
+    "PLTR": "Information Technology", "NET": "Information Technology",
+    "DDOG": "Information Technology", "SNOW": "Information Technology",
+    "SMCI": "Information Technology", "MRVL": "Information Technology",
+    "SNDK": "Information Technology", "ARM": "Information Technology",
+    "TSM": "Information Technology", "ASML": "Information Technology",
+    "SAP": "Information Technology",
+    # Communication Services
+    "GOOGL": "Communication Services", "META": "Communication Services",
+    "NFLX": "Communication Services", "DIS": "Communication Services",
+    "TMUS": "Communication Services", "VZ": "Communication Services",
+    "T": "Communication Services", "EA": "Communication Services",
+    "TTWO": "Communication Services", "OMC": "Communication Services",
+    # Consumer Discretionary
+    "AMZN": "Consumer Discretionary", "TSLA": "Consumer Discretionary",
+    "HD": "Consumer Discretionary", "MCD": "Consumer Discretionary",
+    "LOW": "Consumer Discretionary", "BKNG": "Consumer Discretionary",
+    "TJX": "Consumer Discretionary", "SBUX": "Consumer Discretionary",
+    "NKE": "Consumer Discretionary", "MAR": "Consumer Discretionary",
+    "GM": "Consumer Discretionary", "F": "Consumer Discretionary",
+    # Consumer Staples
+    "WMT": "Consumer Staples", "COST": "Consumer Staples",
+    "PG": "Consumer Staples", "KO": "Consumer Staples",
+    "PEP": "Consumer Staples", "PM": "Consumer Staples",
+    "MO": "Consumer Staples", "CL": "Consumer Staples",
+    "MDLZ": "Consumer Staples", "KMB": "Consumer Staples",
+    "GIS": "Consumer Staples", "KR": "Consumer Staples",
+    # Energy
+    "XOM": "Energy", "CVX": "Energy", "COP": "Energy",
+    "SLB": "Energy", "EOG": "Energy", "MPC": "Energy",
+    "PSX": "Energy", "OXY": "Energy", "KMI": "Energy",
+    "WMB": "Energy", "VLO": "Energy", "HAL": "Energy",
+    # Financials
+    "JPM": "Financials", "BAC": "Financials", "WFC": "Financials",
+    "GS": "Financials", "MS": "Financials", "C": "Financials",
+    "SCHW": "Financials", "AXP": "Financials", "BLK": "Financials",
+    "SPGI": "Financials", "CME": "Financials", "ICE": "Financials",
+    "CB": "Financials", "PGR": "Financials",
+    # Health Care
+    "LLY": "Health Care", "UNH": "Health Care", "JNJ": "Health Care",
+    "ABBV": "Health Care", "MRK": "Health Care", "TMO": "Health Care",
+    "ABT": "Health Care", "AMGN": "Health Care", "GILD": "Health Care",
+    "ISRG": "Health Care", "MDT": "Health Care", "BMY": "Health Care",
+    "CVS": "Health Care", "CI": "Health Care",
+    # Industrials
+    "GE": "Industrials", "CAT": "Industrials", "RTX": "Industrials",
+    "UNP": "Industrials", "HON": "Industrials", "UPS": "Industrials",
+    "BA": "Industrials", "DE": "Industrials", "LMT": "Industrials",
+    "ETN": "Industrials", "WM": "Industrials", "NOC": "Industrials",
+    "CSX": "Industrials", "VRT": "Industrials", "RKLB": "Industrials",
+    # Materials
+    "LIN": "Materials", "APD": "Materials", "SHW": "Materials",
+    "ECL": "Materials", "NEM": "Materials", "FCX": "Materials",
+    "NUE": "Materials", "DOW": "Materials", "DD": "Materials",
+    "MLM": "Materials", "VMC": "Materials",
+    # Real Estate
+    "PLD": "Real Estate", "AMT": "Real Estate", "EQIX": "Real Estate",
+    "WELL": "Real Estate", "SPG": "Real Estate", "O": "Real Estate",
+    "CCI": "Real Estate", "PSA": "Real Estate", "DLR": "Real Estate",
+    "CBRE": "Real Estate", "VICI": "Real Estate",
+    # Utilities
+    "NEE": "Utilities", "SO": "Utilities", "DUK": "Utilities",
+    "CEG": "Utilities", "AEP": "Utilities", "SRE": "Utilities",
+    "EXC": "Utilities", "XEL": "Utilities", "ED": "Utilities",
+    "PCG": "Utilities", "PEG": "Utilities", "VST": "Utilities",
+    # Diversified market and defensive fixed-income fallbacks
+    "SPY": "Broad Market ETF", "TLT": "Fixed Income ETF",
+}
+
+TICKER_UNIVERSE = list(TICKER_SECTORS)
+
+# Fallbacks are used only when too few candidates pass the cheap screen. The
+# normal path remains sector-balanced and capped at MAX_ACTIVE_WATCHLIST_SIZE.
 ACTIVE_TICKERS = [
-    "NVDA", "AMD", "TSM", "MU", "SMCI", "DELL", "VRT", "ETN", "CEG", "TLT", "SNDK", "RKLB"
+    "SPY", "TLT", "JPM", "LLY", "XOM", "WMT", "GE", "NEE", "LIN", "AMT", "AAPL"
 ]
 
 def get_allowed_tickers() -> List[str]:
-    """Returns the centralized list of 40 allowed ticker symbols for trading security guardrails."""
+    """Return the versioned universe used by deterministic broker guardrails."""
     return TICKER_UNIVERSE
 
 def get_active_tickers() -> List[str]:
-    """Returns the static subset of 10 ticker symbols currently active in the daily analysis pipeline."""
+    """Return the capped, multi-sector fallback watchlist."""
     return ACTIVE_TICKERS
+
+
+def get_ticker_sector(ticker: str) -> str:
+    """Return checked-in sector metadata for an authorized ticker."""
+    return TICKER_SECTORS[str(ticker).strip().upper()]
 
 
 async def determine_active_watchlist(
@@ -81,8 +160,10 @@ async def determine_active_watchlist(
     Logic:
     1. Force-include required account holdings and the default real-account holdings.
     2. Filter out non-owned stocks that are trading below their 50-day Simple Moving Average (SMA).
-    3. Score the remaining stocks by momentum (current_price / 50-day SMA) and take the top performers.
-    4. Pad the watchlist with the original ACTIVE_TICKERS list if it contains fewer than 11 stocks.
+    3. Score the remaining stocks by momentum (current_price / 50-day SMA).
+    4. Admit at most two non-held candidates per sector so the small sentiment
+       watchlist is not consumed by one correlated industry.
+    5. Pad with the multi-sector ACTIVE_TICKERS fallback if fewer than 11 pass.
        If more than 11 unique holdings are required, retain every holding and expand the list.
     """
     from app.tools.bigquery_service import get_latest_portfolio_holdings, get_recently_sold_tickers
@@ -105,7 +186,7 @@ async def determine_active_watchlist(
     # real-account lookup. Every held ticker must remain in the analysis path.
     owned_tickers = list(dict.fromkeys(required + owned_tickers))
     owned_tickers = [t for t in owned_tickers if t in TICKER_UNIVERSE]
-    watchlist_limit = max(11, len(owned_tickers))
+    watchlist_limit = max(MAX_ACTIVE_WATCHLIST_SIZE, len(owned_tickers))
 
     # 2. Retrieve recently sold tickers from BQ trade history to prevent immediate repurchase (cooling-down)
     try:
@@ -118,6 +199,8 @@ async def determine_active_watchlist(
     candidates = [t for t in TICKER_UNIVERSE if t not in owned_tickers and t not in recently_sold]
 
     # Helper function to fetch history and compute SMA in a thread pool
+    fetch_semaphore = asyncio.Semaphore(MAX_CONCURRENT_PRICE_FETCHES)
+
     async def fetch_sma_and_momentum(ticker: str):
         try:
             def get_history():
@@ -125,7 +208,8 @@ async def determine_active_watchlist(
                 # Fetch 3 months of history to ensure we have at least 50 trading days
                 return stock.history(period="3mo")
 
-            df = await asyncio.to_thread(get_history)
+            async with fetch_semaphore:
+                df = await asyncio.to_thread(get_history)
             if df is not None and not df.empty and "Close" in df.columns:
                 close_prices = df["Close"]
                 if len(close_prices) >= 50:
@@ -168,7 +252,15 @@ async def determine_active_watchlist(
 
     # 5. Sort valid candidates by momentum descending (highest score first)
     valid_candidates.sort(key=lambda x: x["momentum"], reverse=True)
-    top_candidate_tickers = [c["ticker"] for c in valid_candidates]
+    sector_counts = Counter(TICKER_SECTORS[ticker] for ticker in owned_tickers)
+    top_candidate_tickers = []
+    for candidate in valid_candidates:
+        ticker = candidate["ticker"]
+        sector = TICKER_SECTORS[ticker]
+        if sector_counts[sector] >= MAX_CANDIDATES_PER_SECTOR:
+            continue
+        top_candidate_tickers.append(ticker)
+        sector_counts[sector] += 1
 
     # 6. Combine owned tickers + top candidates to build the watchlist
     watchlist_set = set()
@@ -180,10 +272,18 @@ async def determine_active_watchlist(
             final_watchlist.append(t)
 
     # 7. Pad with the static core watch list (ACTIVE_TICKERS) if we have fewer than 11 stocks
+    fallback_sector_counts = Counter(TICKER_SECTORS[ticker] for ticker in final_watchlist)
     for t in ACTIVE_TICKERS:
-        if t not in recently_sold and t not in watchlist_set and len(final_watchlist) < watchlist_limit:
+        sector = TICKER_SECTORS[t]
+        if (
+            t not in recently_sold
+            and t not in watchlist_set
+            and fallback_sector_counts[sector] < MAX_CANDIDATES_PER_SECTOR
+            and len(final_watchlist) < watchlist_limit
+        ):
             watchlist_set.add(t)
             final_watchlist.append(t)
+            fallback_sector_counts[sector] += 1
 
     # 8. Build detailed pre-screener status log if requested
     if return_details:

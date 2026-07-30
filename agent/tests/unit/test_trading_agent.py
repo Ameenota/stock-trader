@@ -52,8 +52,8 @@ async def test_validate_and_intercept_trades_invalid_symbol():
     mock_tool = MagicMock()
     mock_tool.name = "buy_stock"
     
-    # Valid account but invalid symbol (e.g. AAPL is not in our 10 AI infrastructure assets)
-    args = {"account_number": "48661", "symbol": "AAPL", "quantity": 1}
+    # Valid account but a symbol absent from the versioned central allowlist.
+    args = {"account_number": "48661", "symbol": "ZZZZ", "quantity": 1}
     mock_context = MagicMock()
 
     with pytest.raises(ValueError, match="outside the authorized asset universe"):
@@ -79,8 +79,7 @@ async def test_validate_and_intercept_trades_list_symbols_invalid():
     mock_tool = MagicMock()
     mock_tool.name = "get_quotes"
     
-    # AAPL is not in our allowed asset universe
-    args = {"account_number": "48661", "symbols": ["MU", "AAPL", "TSM"]}
+    args = {"account_number": "48661", "symbols": ["MU", "ZZZZ", "TSM"]}
     mock_context = MagicMock()
 
     with pytest.raises(ValueError, match="outside the authorized asset universe"):

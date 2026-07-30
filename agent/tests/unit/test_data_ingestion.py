@@ -15,7 +15,13 @@
 import time
 from unittest.mock import MagicMock, patch
 import pytest
-from app.tools.data_ingestion import fetch_ticker_news, ingest_market_news
+from app.tools.data_ingestion import (
+    MAX_NEWS_ARTICLES_PER_TICKER,
+    MAX_SENTIMENT_ARTICLES_PER_RUN,
+    build_bounded_news_payload,
+    fetch_ticker_news,
+    ingest_market_news,
+)
 
 
 from datetime import datetime, timezone
@@ -119,3 +125,51 @@ def test_ingest_market_news_structure(mock_ticker_class, mock_news_data):
     for ticker in expected_tickers:
         assert isinstance(results[ticker], list)
         assert len(results[ticker]) == 2
+
+
+@patch("app.tools.data_ingestion.yf.Ticker")
+def test_fetch_ticker_news_caps_articles_and_keeps_newest(mock_ticker_class):
+    current_time = 1700000000.0
+    mock_ticker_instance = MagicMock()
+    mock_ticker_instance.news = [
+        {
+            "content": {
+                "title": f"Article {offset}",
+                "summary": f"Summary {offset}",
+                "pubDate": datetime.fromtimestamp(
+                    current_time - offset, tz=timezone.utc
+                ).isoformat(),
+            }
+        }
+        for offset in (500, 100, 400, 200, 300)
+    ]
+    mock_ticker_class.return_value = mock_ticker_instance
+
+    results = fetch_ticker_news("NVDA", current_time=current_time)
+
+    assert len(results) == MAX_NEWS_ARTICLES_PER_TICKER
+    assert [item["title"] for item in results] == [
+        "Article 100",
+        "Article 200",
+        "Article 300",
+    ]
+
+
+def test_bounded_payload_enforces_per_ticker_and_whole_run_caps():
+    market_data = {
+        f"TICKER{ticker_index}": {
+            "news": [
+                {"title": f"{ticker_index}-{article_index}", "summary": "news"}
+                for article_index in range(10)
+            ]
+        }
+        for ticker_index in range(20)
+    }
+
+    payload = build_bounded_news_payload(market_data)
+
+    assert sum(len(news) for news in payload.values()) == MAX_SENTIMENT_ARTICLES_PER_RUN
+    assert all(len(news) <= MAX_NEWS_ARTICLES_PER_TICKER for news in payload.values())
+    # Round-robin admission gives every ticker at least one article before any
+    # ticker receives a second, avoiding first-ticker dominance.
+    assert all(len(news) >= 1 for news in payload.values())

@@ -1167,7 +1167,7 @@ def upsert_position_risk_state(
 
 
 def seed_account_registry(dataset_id: str = "portfolio_analytics") -> None:
-    """Idempotently seed the primary real account and the initial ATR experiments."""
+    """Idempotently seed the real account and versioned ATR experiment cohorts."""
     client = get_bigquery_client()
     table_id = f"{client.project}.{dataset_id}.accounts"
     immediate = AtrPolicyConfig()
@@ -1197,7 +1197,7 @@ def seed_account_registry(dataset_id: str = "portfolio_analytics") -> None:
             "account_id": "exp-atr-immediate",
             "display_name": "ATR Immediate Exit",
             "account_type": "PAPER",
-            "status": "ACTIVE",
+            "status": "ARCHIVED",
             "is_dashboard_default": False,
             "broker_provider": None,
             "broker_account_ref": None,
@@ -1214,7 +1214,7 @@ def seed_account_registry(dataset_id: str = "portfolio_analytics") -> None:
             "account_id": "exp-atr-confirmation",
             "display_name": "ATR Two-Close Confirmation",
             "account_type": "PAPER",
-            "status": "ACTIVE",
+            "status": "ARCHIVED",
             "is_dashboard_default": False,
             "broker_provider": None,
             "broker_account_ref": None,
@@ -1223,6 +1223,40 @@ def seed_account_registry(dataset_id: str = "portfolio_analytics") -> None:
             "initial_cash": 10_000.0,
             "base_currency": "USD",
             "policy_name": "atr-confirmed-exit",
+            "policy_version": "atr-v1",
+            "policy_config": confirmation.as_dict(),
+            "policy_config_hash": policy_config_hash(confirmation),
+        },
+        {
+            "account_id": "exp-broad-atr-immediate-v1",
+            "display_name": "Broad Universe ATR Immediate v1",
+            "account_type": "PAPER",
+            "status": "ACTIVE",
+            "is_dashboard_default": False,
+            "broker_provider": None,
+            "broker_account_ref": None,
+            "broker_account_suffix": None,
+            "live_execution_allowed": False,
+            "initial_cash": 10_000.0,
+            "base_currency": "USD",
+            "policy_name": "broad-universe-atr-immediate-v1",
+            "policy_version": "atr-v1",
+            "policy_config": immediate.as_dict(),
+            "policy_config_hash": policy_config_hash(immediate),
+        },
+        {
+            "account_id": "exp-broad-atr-confirmation-v1",
+            "display_name": "Broad Universe ATR Two-Close v1",
+            "account_type": "PAPER",
+            "status": "ACTIVE",
+            "is_dashboard_default": False,
+            "broker_provider": None,
+            "broker_account_ref": None,
+            "broker_account_suffix": None,
+            "live_execution_allowed": False,
+            "initial_cash": 10_000.0,
+            "base_currency": "USD",
+            "policy_name": "broad-universe-atr-confirmed-v1",
             "policy_version": "atr-v1",
             "policy_config": confirmation.as_dict(),
             "policy_config_hash": policy_config_hash(confirmation),

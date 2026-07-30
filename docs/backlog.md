@@ -2,7 +2,7 @@
 
 This is the canonical engineering and strategy backlog for the stock trader. Items are ordered by expected impact on capital safety and risk-adjusted performance, not by implementation ease.
 
-Last reviewed: 2026-07-23
+Last reviewed: 2026-07-30
 
 Detailed implementation sequence for P0 items 1–4: `docs/p0_live_readiness_implementation_plan.md`.
 
@@ -116,8 +116,9 @@ Detailed account-scoped experimentation, migration, failure, and test plan: `doc
   - Migration, fail-closed error handling, concurrency, and safety tests in `docs/account_scoped_experimentation_implementation_plan.md` pass.
 - Dependencies: Must precede enabling persistent paper cron or adding another real account. Keep `SKIP_LIVE_TRADES=true` until this item is Done and live enablement is separately approved.
 - Verification evidence (2026-07-21): additive BigQuery migration completed in `conspiracy-493120.portfolio_analytics`; three validated account rows were seeded with `live_execution_allowed=false`, paper broker fields null, and exactly one real dashboard default. Legacy backfill checks returned zero unscoped trades, snapshots, runs, risk rows, or metric rows. The initial `$100` paper histories were explicitly discarded and both experiments were cleanly reseeded at `$10,000`. A leaked `$35` real-account order cap was then found by the deterministic policy, fixed so paper order limits scale to 35% of paper equity while real/broker limits remain unchanged, and regression-tested. Each paper account subsequently completed exactly one `$3,000` META fill and reconciled to `$7,000` cash plus `$3,000` META. The real trade count remained unchanged. Discord reports all three accounts, combined P&L, explicit account identity, latest audited targets, and the orders tied to each decision. Evidence logs: `/tmp/stock-trader/manual_paper_reset_10000_execution_20260721.log` (expected cap rejection) and `/tmp/stock-trader/manual_paper_reset_10000_execution_fixed_20260721.log` (successful clean execution).
-- Operational state (updated 2026-07-21): the user explicitly authorized activating both paper experiments before a frontend deployment and accepted that newer paper rows may affect the deployed legacy dashboard. Both paper accounts are `ACTIVE`, brokerless, and permanently ineligible for live execution. The installed `--all-accounts` cron therefore processes the real dry-run account and both persistent paper ledgers.
+- Operational state (updated 2026-07-28): after the initial cohort produced confounded holdings, the user authorized a versioned experiment rollover alongside the multi-sector universe expansion. `exp-atr-immediate` and `exp-atr-confirmation` are now `ARCHIVED` with all historical trades, snapshots, runs, metrics, and risk state preserved. `exp-broad-atr-immediate-v1` and `exp-broad-atr-confirmation-v1` are `ACTIVE`, brokerless, permanently ineligible for live execution, and cleanly initialized at `$10,000` with zero ledger or risk-state rows. Their policy JSON is identical except for one-close/no-recovery versus two-close/recovery ATR confirmation. The installed `--all-accounts` cron automatically resolves the real dry-run account and these two new paper ledgers; no cron change is required.
 - Current cron contract: `SKIP_LIVE_TRADES=true` is mandatory. The two `PAPER` accounts execute and persist simulated fills/cash/holdings; `real-48661` may calculate and audit simulated orders in `REAL_DRY_RUN`, but cannot submit a Robinhood order or mutate the real portfolio. Same-day retries remain idempotent. The clean `$10,000` paper baselines and their first correctly sized fills are now finalized.
+- Pipeline account-resolution follow-up (2026-07-30): one active-only resolver now supplies the complete account set used for preflight, holdings, processing, and consolidated Discord reporting. `ARCHIVED` and `PAUSED` accounts are excluded before any account-specific pipeline work or summary snapshot/activity lookup. Covered by `test_resolve_available_accounts_uses_only_active_registry_rows`.
 - ADK eval note (2026-07-21): `agents-cli eval run` was attempted, but its inference adapter cannot generate a JSON tool schema for the pre-existing `analyze_and_rank_portfolio(tool_context: ToolContext)` callback, so 0/2 generic greeting/weather cases reached inference. The network-backed ADK integration tests passed; deterministic tests and real dry/paper pipeline evidence are the release gate for this account-scoping item. Fixing the generic eval adapter remains operational tooling work and is not evidence against the deterministic execution contracts.
 
 ### 6. Make cron runs idempotent and use stable decision times
@@ -172,6 +173,16 @@ Detailed account-scoped experimentation, migration, failure, and test plan: `doc
   - A portfolio of three highly correlated names is reduced or rejected deterministically.
   - Position sizes respect configured loss and exposure limits across low- and high-volatility fixtures.
   - New limits improve out-of-sample drawdown without relying solely on lower market exposure.
+- Partial implementation evidence (2026-07-28): the checked-in research/trading
+  universe was broadened from the AI/infrastructure theme to a versioned,
+  multi-sector large-cap catalog. The cheap SMA/RSI screen now admits at most two
+  non-held candidates per sector into the normal 11-ticker active watchlist, while
+  all held positions remain mandatory inputs. News/Gemini processing remains
+  downstream of that cap and is additionally limited to the three newest articles
+  per ticker and 33 articles per run. Portfolio-level sector/correlation caps and risk sizing remain required
+  before this item can be marked Done. Verification: 42 focused screener, ingestion,
+  broker-guardrail, and execution tests passed; the complete non-network matrix passed
+  131 tests, and the two network-backed ADK integration tests passed separately.
 
 ### 9. Correct technical-signal definitions and data timing
 
@@ -207,7 +218,7 @@ Detailed account-scoped experimentation, migration, failure, and test plan: `doc
 - Priority: P2
 - Status: Ready
 - Impact: Medium
-- Standalone model design: `docs/tickerrank_standalone_model_plan.md` specifies the proposed ticker-conditioned relevance, importance, and direction model, dataset construction, human evaluation, and Hugging Face release workflow. It is intended for a separate repository; adoption by this trading system remains subject to the shadow and walk-forward promotion gates below.
+- Standalone model design: the separate `tickerBERT` project's `docs/model_plan.md` specifies the proposed ticker-conditioned relevance, importance, and direction model, dataset construction, human evaluation, and Hugging Face release workflow. Adoption by this trading system remains subject to the shadow and walk-forward promotion gates below.
 - Problem: The current sentiment agent sends every news-bearing ticker's titles and full summaries to `gemini-flash-latest`, asks the model to generate both scores and theses, and does not record token usage. This consumes unnecessary LLM tokens, reprocesses duplicate or previously seen stories, and still does not prove that generative sentiment adds predictive value.
 - Work:
   - Implement FinBERT in this repository as the primary classifier for routine financial-news sentiment; pin and audit the exact model/revision rather than downloading a mutable latest revision at runtime.

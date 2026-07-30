@@ -28,13 +28,42 @@ CLR_BLUE = "\033[94m"
 CLR_MAGENTA = "\033[95m"
 CLR_CYAN = "\033[96m"
 
-from app.tools.ticker_universe import get_active_tickers
+from app.tools.ticker_universe import MAX_ACTIVE_WATCHLIST_SIZE, get_active_tickers
 
-# Predefined list of 9 AI infrastructure stocks + 1 market hedge ETF
+# The broad universe is screened before this module is called. These hard caps
+# keep Gemini input bounded even if the research universe grows substantially.
+MAX_NEWS_ARTICLES_PER_TICKER = 3
+MAX_SENTIMENT_ARTICLES_PER_RUN = (
+    MAX_ACTIVE_WATCHLIST_SIZE * MAX_NEWS_ARTICLES_PER_TICKER
+)
+
+# Static multi-sector fallbacks used only by direct ingestion callers.
 TICKERS = get_active_tickers()
 
 
 from datetime import datetime, timedelta
+
+
+def build_bounded_news_payload(
+    market_data: Dict[str, Dict[str, Any]],
+) -> Dict[str, List[Dict[str, str]]]:
+    """Build a fair, hard-capped Gemini payload from already-shortlisted tickers.
+
+    Articles are admitted round-robin so one news-heavy ticker cannot consume the
+    entire run budget. Every ticker remains present; an empty list follows the
+    deterministic no-news decay path.
+    """
+    bounded = {ticker: [] for ticker in market_data}
+    admitted = 0
+    for article_index in range(MAX_NEWS_ARTICLES_PER_TICKER):
+        for ticker, data in market_data.items():
+            if admitted >= MAX_SENTIMENT_ARTICLES_PER_RUN:
+                return bounded
+            news = data.get("news", []) or []
+            if article_index < len(news):
+                bounded[ticker].append(news[article_index])
+                admitted += 1
+    return bounded
 
 
 def fetch_completed_daily_history(ticker: str, *, now: datetime, calendar_days: int) -> pd.DataFrame:
@@ -91,10 +120,15 @@ def fetch_ticker_news(ticker: str, current_time: float | None = None) -> List[Di
             summary = content.get("summary", "")
             filtered_news.append({
                 "title": title,
-                "summary": summary
+                "summary": summary,
+                "_publish_time": publish_time,
             })
 
-    return filtered_news
+    filtered_news.sort(key=lambda item: item["_publish_time"], reverse=True)
+    return [
+        {"title": item["title"], "summary": item["summary"]}
+        for item in filtered_news[:MAX_NEWS_ARTICLES_PER_TICKER]
+    ]
 
 
 def ingest_market_news(tickers: List[str] | None = None, current_time: float | None = None) -> Dict[str, List[Dict[str, str]]]:
@@ -180,9 +214,14 @@ def fetch_ticker_market_data(ticker: str, current_time: float | None = None) -> 
                     summary = content.get("summary", "")
                     filtered_news.append({
                         "title": title,
-                        "summary": summary
+                        "summary": summary,
+                        "_publish_time": publish_time,
                     })
-            data["news"] = filtered_news
+            filtered_news.sort(key=lambda item: item["_publish_time"], reverse=True)
+            data["news"] = [
+                {"title": item["title"], "summary": item["summary"]}
+                for item in filtered_news[:MAX_NEWS_ARTICLES_PER_TICKER]
+            ]
     except Exception:
         pass
 
@@ -387,7 +426,16 @@ async def run_sentiment_analysis_pipeline(
 
     # 1. Dynamically determine the watchlist and get details for all universe assets
     print(f"\n{CLR_BOLD}{CLR_CYAN}📥 [PHASE: 2. Ingestion & Watchlist Screening]{CLR_RESET}")
-    print("   Determining active watchlist from 40-asset universe...")
+    from app.tools.ticker_universe import (
+        MAX_ACTIVE_WATCHLIST_SIZE,
+        UNIVERSE_VERSION,
+        get_allowed_tickers,
+    )
+    print(
+        f"   Determining active watchlist from {len(get_allowed_tickers())}-asset "
+        f"universe ({UNIVERSE_VERSION}); normal sentiment cap="
+        f"{MAX_ACTIVE_WATCHLIST_SIZE} tickers..."
+    )
     active_tickers, all_tickers_details = await determine_active_watchlist(
         dataset_id=dataset_id,
         return_details=True,
@@ -436,13 +484,19 @@ async def run_sentiment_analysis_pipeline(
         session = await session_service.create_session(user_id="cron_job", app_name="sentiment")
         runner = Runner(agent=sentiment_agent, session_service=session_service, app_name="sentiment")
 
-        news_dict_all = {ticker: data.get("news", []) for ticker, data in market_data.items()}
+        news_dict_all = build_bounded_news_payload(market_data)
         news_dict_with_news = {ticker: news for ticker, news in news_dict_all.items() if len(news) > 0}
         tickers_no_news = [ticker for ticker, news in news_dict_all.items() if len(news) == 0]
 
         sentiment_result_obj = None
         if news_dict_with_news:
-            print(f"   Invoking {CLR_BOLD}{CLR_MAGENTA}SENTIMENT_AGENT{CLR_RESET} (Gemini) to evaluate news sentiment for {len(news_dict_with_news)} tickers...")
+            article_count = sum(len(news) for news in news_dict_with_news.values())
+            print(
+                f"   Invoking {CLR_BOLD}{CLR_MAGENTA}SENTIMENT_AGENT{CLR_RESET} "
+                f"(Gemini) for {len(news_dict_with_news)} tickers / {article_count} "
+                f"articles (max {MAX_NEWS_ARTICLES_PER_TICKER} per ticker / "
+                f"{MAX_SENTIMENT_ARTICLES_PER_RUN} per run)..."
+            )
             message = types.Content(
                 role="user",
                 parts=[types.Part.from_text(text=f"Analyze these news articles:\n{news_dict_with_news}")]

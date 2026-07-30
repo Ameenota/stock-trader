@@ -14,14 +14,15 @@ The trading system follows a six-phase daily pipeline:
 ---
 
 ## Phase 1: Watchlist Screening (Pre-Filtering & Momentum)
-Rather than executing resource-intensive sentiment analysis on the entire allowable universe of 41 AI-sector and grid infrastructure assets, the system dynamically filters the universe down to a refined **11-stock active watchlist** using the following screening criteria:
+Rather than executing resource-intensive sentiment analysis on the entire versioned multi-sector universe, the system dynamically filters it down to a refined **11-stock active watchlist**. More held positions expand the list only when required for safe exit monitoring:
 
 1. **Owned Position Promotion**: Any stock currently held in the portfolio is automatically force-included in the active watchlist.
 2. **Recently Sold Live Asset Filter (Cool-down)**: To reduce reactiveness and avoid rapid buy-sell-buy chop, any asset that has been sold or liquidated as a live trade (`dry_run = FALSE` in BigQuery's `trade_history` table) within the last **21 days** is automatically excluded from the active watchlist candidates and fallback padding. (Simulated/dry-run trades are ignored).
 3. **Trend Filter (50-Day SMA Gate)**: Candidate (non-owned) stocks must be trading **above their 50-day Simple Moving Average (SMA)**, **UNLESS** they are deeply oversold with a 14-day RSI $< 25$. If they meet this oversold exception, they bypass the SMA gate and are promoted to the active watchlist (allowing high-quality value entry on deep pullbacks).
 4. **Momentum Scoring**: The remaining candidates that passed either the SMA trend filter or the RSI oversold bypass are scored and ranked based on a momentum ratio:
    $$\text{Momentum} = \frac{\text{Current Price}}{\text{50-day SMA}}$$
-5. **Watchlist Composition**: 
+5. **Sector Balance**: At most two non-held candidates from one sector may consume the normal active watchlist.
+6. **Watchlist Composition**:
    - The watchlist is populated first by owned assets.
    - The remaining slots (up to 11 total) are filled by candidate assets with the highest momentum scores (including oversold promotions).
    - If the list contains fewer than 11 assets, it is padded using the static core asset watchlist (excluding any recently sold assets under the cool-down filter).
@@ -31,7 +32,7 @@ Rather than executing resource-intensive sentiment analysis on the entire allowa
 ## Phase 2: Market Data Ingestion & Indicator Formulation
 For each of the 11 assets on the active watchlist, the system gathers several technical, sentiment, and fundamental metrics:
 
-* **News Stream**: Ingests all news headlines and summaries published over the last 24 hours.
+* **News Stream**: Ingests at most the three newest headlines and summaries per ticker from the last 24 hours, with a hard 33-article cap for the entire Gemini run.
 * **Technical Trend Indicators**:
   * **20-day SMA**: Calculates the short-term moving average.
   * **Price/MA Ratio**: Evaluates short-term extension ($Current Price / 20\text{-day SMA}$).

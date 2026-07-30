@@ -101,6 +101,12 @@ cd agent && agents-cli deploy
 - `SKIP_INGESTION` — `true` to bypass news scraping (use cached BQ data)
 - `GOOGLE_CLOUD_PROJECT` — GCP project ID
 
+## Daily Run Reviews
+
+- For questions such as “How did today's run do?”, read and follow `skills/review-stock-trader-run/SKILL.md` completely before reviewing the run.
+- Treat scheduler logs in `/tmp/stock-trader` as the sole source for routine run recaps. Do not query BigQuery, Robinhood, or the dashboard unless the user explicitly requests corroboration.
+- Keep reviews read-only and distinguish proposed or planned trades from confirmed execution. `REAL_DRY_RUN` never implies a live order was placed.
+
 ## Backlog Maintenance
 
 - Treat `docs/backlog.md` as the canonical backlog and read it before planning material trading, risk, execution, evaluation, or operational changes.

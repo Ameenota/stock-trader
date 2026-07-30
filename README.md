@@ -67,12 +67,12 @@ graph TD
 ---
 
 ## 🚦 Architectural Constraints & Asset Screener
-* **Allowed Ticker Universe**: Restricts trade execution to a centralized **40-stock universe** of liquid, large-cap AI core (NVDA, AMD, AVGO), chip foundry/memory (TSM, MU, ASML), cloud providers (MSFT, GOOGL, AMZN), grid power utilities (CEG, VST, ETN), and enterprise AI software/security (PLTR, CRWD) stocks.
-* **Dynamic Active Watchlist**: A python-based pre-screener dynamically constructs the daily active list of 10 tickers from the 40-stock universe:
+* **Allowed Ticker Universe**: Restricts trade execution to a checked-in, versioned **multi-sector large-cap universe** spanning information technology, communications, consumer, energy, financials, health care, industrials, materials, real estate, utilities, and defensive ETF fallbacks.
+* **Dynamic Active Watchlist**: A Python pre-screener dynamically constructs the daily active list of at most 11 tickers from the broader universe (unless additional held positions require exit monitoring):
   1. It fetches current portfolio holdings from BigQuery and forces them to be on the watchlist so they are monitored for hold/sell decisions.
   2. It downloads price history for candidates and filters out stocks trading below their **50-day Simple Moving Average (SMA)**, **UNLESS** they are deeply oversold with a 14-day RSI $< 25$ (allowing value entries on deep pullbacks).
-  3. It ranks remaining candidates by trend momentum ($\text{price} / \text{50-day SMA}$) and selects the top performers, padding with core defaults as needed.
-* **Token & Cost Efficiency**: The heavy news scraping and LLM sentiment analysis are run **only** on the dynamically generated 10 active tickers (using 0 LLM tokens during screening), keeping API costs low and predictable.
+  3. It ranks remaining candidates by trend momentum ($\text{price} / \text{50-day SMA}$), admits at most two non-held candidates per sector, and pads with multi-sector defaults as needed.
+* **Token & Cost Efficiency**: The heavy news scraping and LLM sentiment analysis are run **only** on the dynamically generated 11 active tickers (using 0 LLM tokens during screening), with at most the three newest articles per ticker and 33 articles per run.
 * **Sandbox Limit**: Execution budget capped at **$100** total starting equity.
 * **Traceability**: All execution steps, reasoning strings, and account snapshots must be logged to BigQuery.
   
@@ -84,20 +84,20 @@ The pipeline employs a **three-stage quantitative & qualitative funnel** to filt
 
 ```mermaid
 graph TD
-    A["Central Allow List (40 AI Tickers)"] -->|"Stage 1: Technical Screening (Free)"| B["Daily Watchlist (10 Tickers)"]
+    A["Versioned Multi-Sector Allow List"] -->|"Stage 1: Technical Screening (Free)"| B["Daily Watchlist (11 Tickers)"]
     B -->|"Stage 2: Sentiment Analysis (LLM)"| C["Conviction Ranking (1-10)"]
     C -->|"Stage 3: Timing & Crossovers (RSI/MACD)"| D["Execution Decisions (Buy/Sell/Hold)"]
 ```
 
 ### Stage 1: Technical Screening & Filtering
-Every day, a lightweight Python pre-screener scans the 40 stocks in the centralized allowed universe. This scan uses raw price data via `yfinance` (**0 LLM tokens**):
+Every day, a lightweight Python pre-screener scans the centralized multi-sector universe. This scan uses raw price data via `yfinance` (**0 LLM tokens**):
 1.  **Holdings Override**: It checks the latest BigQuery portfolio snapshot. Any stock we currently own is automatically promoted to the watchlist so it is monitored for hold/sell decisions.
 2.  **SMA Trend Filter & RSI Bypass**: Non-owned candidate stocks are filtered out if they are trading below their **50-day Simple Moving Average (SMA)**, **UNLESS** they are deeply oversold (14-day RSI $< 25$). This exception allows promoting high-quality value plays on deep corrections.
-3.  **Momentum Ranking**: The remaining candidates are scored by trend momentum ($\text{price} / \text{50-day SMA}$). The top performers are selected to fill the remaining slots.
-4.  **Watchlist Padding**: If fewer than 10 stocks pass, core defaults (like `NVDA`, `AMD`, and the hedge `TLT`) pad the list to ensure exactly **10 active tickers** are analyzed.
+3.  **Momentum Ranking and Sector Balance**: The remaining candidates are scored by trend momentum ($\text{price} / \text{50-day SMA}$), with at most two non-held candidates admitted per sector.
+4.  **Watchlist Padding**: If fewer than 11 stocks pass, multi-sector defaults pad the list to ensure exactly **11 active tickers** are analyzed.
 
 ### Stage 2: Sentiment Ingestion & Decay
-The pipeline fetches the latest 24 hours of news for the 10 active watchlist tickers. To save API costs, we partition the watchlist:
+The pipeline fetches the latest 24 hours of news for the 11 active watchlist tickers and retains at most the three newest articles per ticker. To save API costs, we partition the watchlist:
 *   **Bypass & Decay**: If a stock has **no news** in the last 24h, the pipeline **bypasses Gemini** and mathematically decays its prior 5-day EWMA sentiment score by **30%** ($\text{score} = \text{EWMA} \times 0.7$) in Python.
 *   **Gemini Ingestion**: If news exists, the news is passed to the **Sentiment Agent** (Gemini-Flash) to score conviction from `-1.0` to `+1.0`.
 *   **Relative Ranking & Liquidation Floor**: Python sorts the 10 tickers by conviction and assigns a relative rank (1-10). The bottom 3 (ranks 1-3) receive a **`LIQUIDATE`** signal, **UNLESS** their 5-day EWMA sentiment is positive/neutral ($\ge +0.05$). If EWMA is $\ge +0.05$, the signal is overridden to **`HOLD`** to prevent spurious relative-rank liquidations.
@@ -183,7 +183,7 @@ This section provides all necessary setup, run, and deployment details to run th
 * **Run Pipeline Skipping Ingestion (Dry-run Debugging)**: Bypass scraping and go straight to execution using cached today's BigQuery metrics:
   ```bash
   cd agent
-  SKIP_LIVE_TRADES=true SKIP_INGESTION=true uv run run_pipeline.py --account exp-atr-confirmation --run-kind execution
+  SKIP_LIVE_TRADES=true SKIP_INGESTION=true uv run run_pipeline.py --account exp-broad-atr-confirmation-v1 --run-kind execution
   ```
 * **List configured accounts**: Prints friendly names, types, status, policy version, and live eligibility without exposing broker secrets:
   ```bash

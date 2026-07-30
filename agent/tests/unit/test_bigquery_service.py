@@ -21,6 +21,7 @@ from app.tools.bigquery_service import (
     insert_sentiment,
     get_latest_signals,
     insert_trade_record,
+    seed_account_registry,
     upsert_position_risk_state,
 )
 
@@ -134,6 +135,31 @@ def test_setup_bigquery(mock_bq_client):
     assert [field.name for field in accounts_table.schema[:4]] == [
         "account_id", "display_name", "account_type", "status"
     ]
+
+
+def test_seed_registry_archives_old_cohort_and_activates_broad_cohort(mock_bq_client):
+    mock_bq_client.query.return_value.result.return_value = []
+
+    seed_account_registry(dataset_id="test_dataset")
+
+    rows = []
+    for query_call in mock_bq_client.query.call_args_list:
+        parameters = query_call.kwargs["job_config"].query_parameters
+        rows.append({parameter.name: parameter.value for parameter in parameters})
+    by_id = {row["account_id"]: row for row in rows}
+
+    assert by_id["real-48661"]["status"] == "ACTIVE"
+    assert by_id["exp-atr-immediate"]["status"] == "ARCHIVED"
+    assert by_id["exp-atr-confirmation"]["status"] == "ARCHIVED"
+    assert by_id["exp-broad-atr-immediate-v1"]["status"] == "ACTIVE"
+    assert by_id["exp-broad-atr-confirmation-v1"]["status"] == "ACTIVE"
+    assert by_id["exp-broad-atr-immediate-v1"]["initial_cash"] == 10_000.0
+    assert by_id["exp-broad-atr-confirmation-v1"]["initial_cash"] == 10_000.0
+    assert by_id["exp-broad-atr-immediate-v1"]["broker_provider"] is None
+    assert by_id["exp-broad-atr-confirmation-v1"]["broker_provider"] is None
+    assert by_id["exp-broad-atr-immediate-v1"]["policy_config"] != by_id[
+        "exp-broad-atr-confirmation-v1"
+    ]["policy_config"]
 
 
 def test_insert_sentiment(mock_bq_client):
