@@ -17,14 +17,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the application code
-COPY app.py .
-COPY pages/ pages/
-COPY .streamlit/ .streamlit/
+# Copy the Dash application and its server-side data layer
+COPY app.py data.py decision_logic.py ./
+COPY assets/ assets/
 
-# Streamlit looks for configurations or secrets in standard paths
 # Expose port 8080 (Cloud Run default target port)
 EXPOSE 8080
 
-# Run Streamlit, overriding default port 8501 to listen on 8080
-ENTRYPOINT ["streamlit", "run", "app.py", "--server.port=8080", "--server.address=0.0.0.0"]
+# Serve short HTTP requests; no persistent Streamlit WebSocket is required
+ENTRYPOINT ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--threads", "8", "--timeout", "60", "app:server"]

@@ -2,7 +2,7 @@
 
 This is the canonical engineering and strategy backlog for the stock trader. Items are ordered by expected impact on capital safety and risk-adjusted performance, not by implementation ease.
 
-Last reviewed: 2026-07-30
+Last reviewed: 2026-07-31
 
 Detailed implementation sequence for P0 items 1–4: `docs/p0_live_readiness_implementation_plan.md`.
 
@@ -282,6 +282,16 @@ Detailed account-scoped experimentation, migration, failure, and test plan: `doc
 
 ## Completed work
 
+- 2026-07-31 — Replaced the public Streamlit dashboard with a single-service
+  Plotly Dash frontend on Cloud Run. The existing account-scoped BigQuery reads,
+  service-account authentication, Plotly graphs, ticker icons, allocation,
+  recommendation, pre-screen, and trade tables, filters, news ticker, and
+  decision-logic reference remain available. Dash uses short HTTP callbacks
+  instead of Streamlit's persistent WebSocket sessions. Deterministic frontend
+  smoke tests passed 3/3, Python compilation and whitespace checks passed, and
+  the local Gunicorn homepage and health endpoint returned HTTP 200. This change
+  preserves the current real-account-only UI and does not complete item 13's
+  future account selector or paper-policy comparison requirements.
 - 2026-07-22 — Completed account-complete held-position ingestion and clearer batch reporting. The shared pre-screen now force-includes the union of holdings from every selected account, so a paper holding cannot lose valuation, sentiment, risk, or policy inputs merely because it was filtered out of the default real account's watchlist. Consolidated Discord summaries now separate whether an account was attempted, whether that attempt succeeded, the current batch error, and the latest previously saved decision. Regression coverage includes a filtered META paper holding and the failed-batch message contract. Verification: 123 tests passed in the restricted full-suite run (the only two failures were network authentication); the network-backed ADK integration subset then passed 3/3 with network access.
 
 Completed historical items remain documented in the root `TODO.md` until they are migrated with their verification evidence. New work and status changes belong in this file.

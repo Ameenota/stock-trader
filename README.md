@@ -116,8 +116,10 @@ The target state is debated and finalized by a multi-agent critique loop:
 
 ---
 
-## 🛠️ Deployed Streamlit Dashboard
-The frontend runs as a containerized service deployed to **Google Cloud Run**.
+## 🛠️ Deployed Dash Dashboard
+The Python frontend uses Plotly Dash with short HTTP callbacks and runs as a
+containerized service on **Google Cloud Run**. It queries BigQuery server-side
+using the Cloud Run service account; browser clients never receive GCP credentials.
 - **Live URL**: [https://portfolio-dashboard-412197301452.us-central1.run.app](https://portfolio-dashboard-412197301452.us-central1.run.app)
 
 ---
@@ -219,7 +221,7 @@ The trading agent orchestrator is built using the Vertex AI Agent Development Ki
   ```
 
 #### 2. Frontend Dashboard (Google Cloud Run)
-The frontend Streamlit app is containerized via `frontend/Dockerfile` and serves on port `8080`.
+The frontend Dash app is containerized via `frontend/Dockerfile` and serves on port `8080`.
 
 * **Build & Deploy Command**:
   ```bash
@@ -239,7 +241,7 @@ The frontend Streamlit app is containerized via `frontend/Dockerfile` and serves
     * `position_risk_state`: Monotonic ATR stop state for open positions.
     * `accounts`: Friendly account registry, brokerless paper/real account type, dashboard default, live eligibility, and validated policy JSON/hash.
   - Provisioned explicitly with `uv run setup_bq.py`; scheduled pipeline runs only perform operational reads and writes.
-  - IAM Permissions: Make sure the service account running the Cloud Run Streamlit dashboard has `BigQuery Admin` or `BigQuery Data Editor` + `BigQuery Job User` roles.
+  - IAM Permissions: The Cloud Run dashboard service account needs read access to the dashboard tables and permission to create BigQuery query jobs.
 
 ---
 
